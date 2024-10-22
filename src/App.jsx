@@ -2,86 +2,81 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, useFBX, Loader } from '@react-three/drei';
 import { useRef, useEffect, Suspense } from 'react';
 import { useControls } from 'leva';
-import { AnimationMixer } from 'three';
+import { AnimationMixer, LoopRepeat } from 'three';
 import { Leva } from 'leva';
 import { useFrame } from '@react-three/fiber';
 
 
 
 const Model = ({ url }) => {
-  const fbx = useFBX(url);
-  const mixer = useRef(null);
+  const modelRef = useRef();
+  const mixer = useRef();
   const actions = useRef({});
-  const currentAction = useRef(null);
+  const currentAction = useRef();
 
-  // Extract animation clips from the FBX model
-  const animations = fbx.animations || [];
+  // Load the FBX model
+  const fbx = useFBX(url);
+  const animations = fbx.animations;
 
-  // Extract animation names
-  const animationNames = animations.map((clip) => clip.name);
-
-  // Leva GUI controls
-  const { animation: selectedAnimation } = useControls('Animations', {
+  // Set up GUI controls for animations
+  const { animation: selectedAnimation } = useControls({
     animation: {
-      options: animationNames,
-      value: animationNames[0] || '',
+      options: animations.map((clip) => clip.name),
+      value: animations[0]?.name || '',
     },
   });
 
-  // Initialize AnimationMixer and Actions
+  // Initialize the mixer and actions when the model is loaded
   useEffect(() => {
-    if (animations.length) {
-      mixer.current = new AnimationMixer(fbx);
+    if (!modelRef.current) return;
 
-      // Create animation actions
-      animations.forEach((clip) => {
-        actions.current[clip.name] = mixer.current.clipAction(clip);
-      });
+    mixer.current = new AnimationMixer(modelRef.current);
 
-      // Play the initial animation
-      if (selectedAnimation && actions.current[selectedAnimation]) {
-        actions.current[selectedAnimation].play();
-        currentAction.current = actions.current[selectedAnimation];
-      }
-    } else {
-      console.warn('No animations found in the FBX model.');
-    }
+    // Create actions for each animation clip
+    animations.forEach((clip) => {
+      const action = mixer.current.clipAction(clip);
+      actions.current[clip.name] = action;
+      action.setLoop(LoopRepeat, Infinity);
+    });
 
-    // Clean up on unmount
+    // Play the initial animation
+    const initialAction = actions.current[selectedAnimation];
+    initialAction.play();
+    currentAction.current = initialAction;
+
     return () => {
-      if (mixer.current) {
-        mixer.current.stopAllAction();
-        mixer.current.uncacheRoot(fbx);
-      }
+      mixer.current.stopAllAction();
     };
-  }, [fbx, animations, selectedAnimation]);
+  }, [animations]);
 
-  // Handle animation switching
+  // Handle animation switching with crossfading
   useEffect(() => {
     if (!mixer.current || !selectedAnimation) return;
 
-    if (currentAction.current) {
-      currentAction.current.fadeOut(0.5);
+    const nextAction = actions.current[selectedAnimation];
+    if (!nextAction) {
+      console.warn(`Animation "${selectedAnimation}" not found.`);
+      return;
     }
 
-    const nextAction = actions.current[selectedAnimation];
-    if (nextAction) {
-      nextAction.reset().fadeIn(0.5).play();
-      currentAction.current = nextAction;
-    } else {
-      console.warn(`Animation "${selectedAnimation}" not found.`);
-    }
+    if (currentAction.current === nextAction) return;
+
+    // Crossfade from the current action to the next action
+    nextAction.reset();
+    nextAction.play();
+    currentAction.current.crossFadeTo(nextAction, 0.5, false);
+
+    currentAction.current = nextAction;
   }, [selectedAnimation]);
 
-  // Update mixer on each frame
-  useFrame((state, delta) => {
-    if (mixer.current) {
-      mixer.current.update(delta);
-    }
+  // Update the mixer on each frame
+  useFrame((_, delta) => {
+    mixer.current?.update(delta);
   });
 
-  return <primitive object={fbx} />;
+  return <primitive ref={modelRef} object={fbx} />;
 };
+
 
 
 const App = () => {
@@ -96,7 +91,6 @@ const App = () => {
 
         {/* Suspense to handle async loading */}
         <Suspense fallback={null}>
-          {/* Load FBX model */}
           <Model url="/models/koi_showa.fbx" />
         </Suspense>
 
