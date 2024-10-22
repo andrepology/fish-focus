@@ -121,42 +121,54 @@ const Model = ({ url }) => {
   // Update movement and rotation each frame
   useFrame((state, delta) => {
     mixer.current?.update(delta);
-
+  
     if (!modelRef.current || fishState !== FISH_STATES.SWIMMING) return;
-
+  
     // Update progress along path
     progress.current = (progress.current + velocity * delta) % 1;
-
+  
     // Get current position and direction
     const point = path.current.getPointAt(progress.current);
     const tangent = path.current.getTangentAt(progress.current);
-    const targetPoint = point.clone().add(tangent);
-
-    // Update position
-    modelRef.current.position.copy(point);
-
-
-
-    // Calculate and apply rotation
+  
+    // Calculate the nose position (offset forward from center)
+    const noseOffset = 2; // Adjust based on your model's size
+    const nosePosition = point.clone().add(tangent.multiplyScalar(noseOffset));
+    
+    // Look ahead on the path to get the target point
+    const lookAheadDistance = 0.05; // Adjust this value to change how sharp the fish can turn
+    const lookAheadT = (progress.current + lookAheadDistance) % 1;
+    const targetPoint = path.current.getPointAt(lookAheadT);
+  
+    // Calculate direction to target
+    const directionToTarget = targetPoint.clone().sub(nosePosition).normalize();
+    
+    // Create rotation matrix
     const lookAt = new THREE.Matrix4();
     const up = previousUp.current.clone();
-
+    
     if (up.dot(new Vector3(0, 1, 0)) < 0) up.negate();
-
-    lookAt.lookAt(point, targetPoint, up);
-
+    
+    // Make the fish look at the target point
+    lookAt.lookAt(nosePosition, targetPoint, up);
+    
+    // Calculate target quaternion with model-specific rotation
     const targetQuaternion = new THREE.Quaternion()
       .setFromRotationMatrix(lookAt)
       .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI, 0)));
-
-    modelRef.current.quaternion.slerp(targetQuaternion, 0.1);
+  
+    // Smoothly interpolate current rotation to target rotation
+    modelRef.current.quaternion.slerp(targetQuaternion, 0.05); // Reduced from 0.1 for smoother turning
+    
+    // Update position (slightly behind the nose position)
+    modelRef.current.position.copy(point);
+    
     previousUp.current.copy(up);
-
-    // Update camera target to follow fish
+  
+    // Update camera to follow fish
     state.camera.position.set(point.x, 50, point.z);
     state.camera.lookAt(point.x, 0, point.z);
     state.camera.updateProjectionMatrix();
-    
   });
 
   return (
