@@ -1,5 +1,5 @@
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, useFBX, Loader, Line } from '@react-three/drei';
+import { OrbitControls, useFBX, Loader, Line, OrthographicCamera } from '@react-three/drei';
 import { useRef, useEffect, Suspense } from 'react';
 import { useControls } from 'leva';
 import { AnimationMixer, LoopRepeat, Vector3, TextureLoader } from 'three';
@@ -50,7 +50,7 @@ const Model = ({ url }) => {
   // Apply textures when model loads
   useEffect(() => {
     if (!modelRef.current) return;
-  
+
     // Traverse the model to find meshes
     modelRef.current.traverse((child) => {
       if (child.isMesh) {
@@ -64,7 +64,7 @@ const Model = ({ url }) => {
           metalness: 2,               // Base metalness
           envMapIntensity: 1,           // Environment map intensity
         });
-        
+
         // Enable shadow casting and receiving
         child.castShadow = true;
         child.receiveShadow = true;
@@ -135,20 +135,28 @@ const Model = ({ url }) => {
     // Update position
     modelRef.current.position.copy(point);
 
+
+
     // Calculate and apply rotation
     const lookAt = new THREE.Matrix4();
     const up = previousUp.current.clone();
-    
+
     if (up.dot(new Vector3(0, 1, 0)) < 0) up.negate();
-    
+
     lookAt.lookAt(point, targetPoint, up);
-    
+
     const targetQuaternion = new THREE.Quaternion()
       .setFromRotationMatrix(lookAt)
       .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI, 0)));
 
     modelRef.current.quaternion.slerp(targetQuaternion, 0.1);
     previousUp.current.copy(up);
+
+    // Update camera target to follow fish
+    state.camera.position.set(point.x, 50, point.z);
+    state.camera.lookAt(point.x, 0, point.z);
+    state.camera.updateProjectionMatrix();
+    
   });
 
   return (
@@ -170,18 +178,24 @@ const App = () => {
       <Leva />
       <Canvas
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
-        camera={{ position: [0, 5, 30], fov: 60 }}
       >
+        <OrthographicCamera
+          makeDefault
+          position={[0, 50, 0]}
+          zoom={10}
+          near={1}
+          far={1000}
+        />
         {/* Lighting */}
         <ambientLight intensity={0.5} />
-        <directionalLight 
-          position={[10, 10, 5]} 
-          intensity={1} 
+        <directionalLight
+          position={[10, 10, 5]}
+          intensity={1}
           castShadow
           shadow-mapSize-width={2048}
           shadow-mapSize-height={2048}
         />
-        <hemisphereLight 
+        <hemisphereLight
           intensity={0.1}
           groundColor="#ff0000"
           color="#0000ff"
@@ -193,7 +207,13 @@ const App = () => {
         </Suspense>
 
         {/* Orbit Controls for camera manipulation */}
-        <OrbitControls />
+        <OrbitControls
+          enableRotate={false}
+          enablePan={true}
+          minZoom={1}
+          maxZoom={20}
+          target={[0, 0, 0]}
+        />
       </Canvas>
       <Loader />
     </div>
