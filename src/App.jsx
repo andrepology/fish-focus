@@ -174,7 +174,18 @@ const App = () => {
       >
         {/* Lighting */}
         <ambientLight intensity={0.5} />
-        <directionalLight position={[10, 10, 5]} intensity={1} />
+        <directionalLight 
+          position={[10, 10, 5]} 
+          intensity={1} 
+          castShadow
+          shadow-mapSize-width={2048}
+          shadow-mapSize-height={2048}
+        />
+        <hemisphereLight 
+          intensity={0.1}
+          groundColor="#ff0000"
+          color="#0000ff"
+        />
 
         {/* Suspense to handle async loading */}
         <Suspense fallback={null}>
