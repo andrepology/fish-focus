@@ -14,38 +14,35 @@ const FISH_STATES = {
   // Add more states as needed
 };
 
+const getRandomTarget = (radius) => {
+  const angle = Math.random() * Math.PI * 2;
+  const distance = Math.random() * radius;
+  const x = Math.cos(angle) * distance;
+  const z = Math.sin(angle) * distance;
+  return new Vector3(x, 0, z);
+};
+
 const Model = ({ url }) => {
   // Refs for animation and model
   const modelRef = useRef();
   const mixer = useRef();
   const actions = useRef({});
   const currentAction = useRef();
-  const clock = useRef(new THREE.Clock());
   const previousUp = useRef(new Vector3(0, 1, 0));
 
-  // Define the path using CatmullRomCurve3
-  const path = useRef(
-    new THREE.CatmullRomCurve3(
-      [
-        new Vector3(0, 0, 0),
-        new Vector3(10, 0, 20),
-        new Vector3(20, 0, -20),
-        new Vector3(30, 0, 0),
-        new Vector3(40, 0, 20),
-        new Vector3(50, 0, -10),
-        new Vector3(60, 0, 10),
-      ],
-      false, // closed curve
-      'catmullrom',
-      0.5 // tension for smoother turns
-    )
-  );
+  // State
+  const [fishState, setFishState] = useState(FISH_STATES.SWIMMING);
+  const velocity = useRef(0.1); // Base speed
+  const acceleration = useRef(0.001);
+  const maxSpeed = 0.2;
+  const minSpeed = 0.05;
+  const targetPosition = useRef(getRandomTarget(50)); // Initial target
+  const maxTurnAngle = Math.PI / 180 * 2; // Maximum turn angle per frame in radians
 
   // Load textures
   const diffuseMap = useLoader(TextureLoader, '/models/textures/koi_showa_diff.png');
   const bumpMap = useLoader(TextureLoader, '/models/textures/koi_showa_bump.png');
   const specularMap = useLoader(TextureLoader, '/models/textures/koi_showa_spec.png');
-  const subsurfaceMap = useLoader(TextureLoader, '/models/textures/koi_showa_subsur.png');
 
   // Apply textures when model loads
   useEffect(() => {
@@ -56,12 +53,12 @@ const Model = ({ url }) => {
       if (child.isMesh) {
         // Create a new standard material with textures
         child.material = new THREE.MeshStandardMaterial({
-          // map: diffuseMap,              // Color/diffuse texture
-          // bumpMap: bumpMap,             // Bump mapping
-          bumpScale: 1,              // Adjust bump strength
-          // roughnessMap: specularMap,    // Using spec map for roughness
-          roughness: 5,               // Base roughness
-          metalness: 2,               // Base metalness
+          map: diffuseMap,              // Color/diffuse texture
+          bumpMap: bumpMap,             // Bump mapping
+          bumpScale: 0.05,              // Adjust bump strength
+          roughnessMap: specularMap,    // Using spec map for roughness
+          roughness: 0.5,               // Base roughness
+          metalness: 0.2,               // Base metalness
           envMapIntensity: 1,           // Environment map intensity
         });
 
@@ -70,12 +67,7 @@ const Model = ({ url }) => {
         child.receiveShadow = true;
       }
     });
-  }, [diffuseMap, bumpMap, specularMap, subsurfaceMap]);
-
-  // State
-  const [fishState, setFishState] = useState(FISH_STATES.SWIMMING);
-  const [velocity, setVelocity] = useState(0.05); // velocity as t increment per frame
-  const progress = useRef(0);
+  }, [diffuseMap, bumpMap, specularMap]);
 
   // Load the FBX model and set up animations
   const fbx = useFBX(url);
@@ -85,7 +77,7 @@ const Model = ({ url }) => {
   const { animation: selectedAnimation } = useControls({
     animation: {
       options: animations.map((clip) => clip.name),
-      value: animations[0]?.name || '',
+      value: animations[1]?.name || '',
     },
   });
 
@@ -100,6 +92,8 @@ const Model = ({ url }) => {
       action.setLoop(LoopRepeat, Infinity);
     });
 
+    console.log(animations);
+
     const initialAction = actions.current[selectedAnimation];
     initialAction.play();
     currentAction.current = initialAction;
@@ -113,73 +107,86 @@ const Model = ({ url }) => {
     const nextAction = actions.current[selectedAnimation];
     if (!nextAction || currentAction.current === nextAction) return;
 
-    nextAction.reset().play();
-    currentAction.current.crossFadeTo(nextAction, 1, false);
+    // Start new action before stopping the previous one
+    nextAction.reset();
+    nextAction.setEffectiveTimeScale(1);
+    nextAction.setEffectiveWeight(1);
+    nextAction.play();
+
+    // Crossfade with previous action
+    if (currentAction.current) {
+      const duration = 0.5; // Duration of crossfade in seconds
+      currentAction.current.crossFadeTo(nextAction, duration, true);
+    }
+
     currentAction.current = nextAction;
   }, [selectedAnimation]);
+
+  // Position and direction refs
+  const position = useRef(new THREE.Vector3()); // Fish's current position
+  const direction = useRef(new THREE.Vector3(1, 0, 0)); // Fish's current direction
 
   // Update movement and rotation each frame
   useFrame((state, delta) => {
     mixer.current?.update(delta);
-  
+
     if (!modelRef.current || fishState !== FISH_STATES.SWIMMING) return;
-  
-    // Update progress along path
-    progress.current = (progress.current + velocity * delta) % 1;
-  
-    // Get current position and direction
-    const point = path.current.getPointAt(progress.current);
-    const tangent = path.current.getTangentAt(progress.current);
-  
-    // Calculate the nose position (offset forward from center)
-    const noseOffset = 2; // Adjust based on your model's size
-    const nosePosition = point.clone().add(tangent.multiplyScalar(noseOffset));
-    
-    // Look ahead on the path to get the target point
-    const lookAheadDistance = 0.05; // Adjust this value to change how sharp the fish can turn
-    const lookAheadT = (progress.current + lookAheadDistance) % 1;
-    const targetPoint = path.current.getPointAt(lookAheadT);
-  
-    // Calculate direction to target
-    const directionToTarget = targetPoint.clone().sub(nosePosition).normalize();
-    
-    // Create rotation matrix
-    const lookAt = new THREE.Matrix4();
-    const up = previousUp.current.clone();
-    
-    if (up.dot(new Vector3(0, 1, 0)) < 0) up.negate();
-    
-    // Make the fish look at the target point
-    lookAt.lookAt(nosePosition, targetPoint, up);
-    
-    // Calculate target quaternion with model-specific rotation
-    const targetQuaternion = new THREE.Quaternion()
-      .setFromRotationMatrix(lookAt)
-      .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI, 0)));
-  
-    // Smoothly interpolate current rotation to target rotation
-    modelRef.current.quaternion.slerp(targetQuaternion, 0.05); // Reduced from 0.1 for smoother turning
-    
-    // Update position (slightly behind the nose position)
-    modelRef.current.position.copy(point);
-    
-    previousUp.current.copy(up);
-  
-    // Update camera to follow fish
-    state.camera.position.set(point.x, 50, point.z);
-    state.camera.lookAt(point.x, 0, point.z);
-    state.camera.updateProjectionMatrix();
+
+    const currentPosition = position.current;
+    const currentDirection = direction.current;
+    const targetPos = targetPosition.current;
+
+    // Calculate the desired direction
+    const desiredDirection = targetPos.clone().sub(currentPosition).normalize();
+
+    // Calculate the angle between current and desired directions
+    let angle = currentDirection.angleTo(desiredDirection);
+
+    // Cross product to determine turn direction
+    const cross = new THREE.Vector3().crossVectors(currentDirection, desiredDirection);
+    const turnDirection = cross.y >= 0 ? 1 : -1;
+
+    // Limit the turn angle
+    const maxTurn = maxTurnAngle * delta * 60; // Adjust for frame rate
+    if (angle > maxTurn) angle = maxTurn;
+
+    // Update current direction
+    const axis = new THREE.Vector3(0, 1, 0); // Y-axis for horizontal turning
+    const quaternion = new THREE.Quaternion().setFromAxisAngle(axis, angle * turnDirection);
+    currentDirection.applyQuaternion(quaternion).normalize();
+
+    // Update speed based on some natural variation
+    velocity.current += (Math.random() - 0.5) * acceleration.current;
+    velocity.current = THREE.MathUtils.clamp(velocity.current, minSpeed, maxSpeed);
+
+    // Update position
+    const moveDistance = velocity.current * delta * 60; // Adjust for frame rate
+    currentPosition.add(currentDirection.clone().multiplyScalar(moveDistance));
+    modelRef.current.position.copy(currentPosition);
+
+    // Update rotation
+    const rotationMatrix = new THREE.Matrix4().lookAt(
+      currentPosition.clone().add(currentDirection),
+      currentPosition,
+      new THREE.Vector3(0, 1, 0)
+    );
+    const targetQuaternion = new THREE.Quaternion().setFromRotationMatrix(rotationMatrix);
+    modelRef.current.quaternion.slerp(targetQuaternion, 0.1);
+
+    // If close to the target, pick a new target
+    if (currentPosition.distanceTo(targetPos) < 5) {
+      targetPosition.current = getRandomTarget(50);
+    }
+
+    // Update camera with smoother following
+    // const cameraTarget = currentPosition.clone();
+    // state.camera.position.lerp(new Vector3(cameraTarget.x, 50, cameraTarget.z), 0.05);
+    // state.camera.lookAt(cameraTarget.x, cameraTarget.y, cameraTarget.z);
   });
 
   return (
     <>
       <primitive ref={modelRef} object={fbx} />
-      <Line
-        points={path.current.getPoints(100)}
-        color="blue"
-        lineWidth={2}
-        dashed={false}
-      />
     </>
   );
 };
