@@ -2,9 +2,9 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, useFBX, Loader, Line } from '@react-three/drei';
 import { useRef, useEffect, Suspense } from 'react';
 import { useControls } from 'leva';
-import { AnimationMixer, LoopRepeat, Vector3, Quaternion } from 'three';
+import { AnimationMixer, LoopRepeat, Vector3, TextureLoader } from 'three';
 import { Leva } from 'leva';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useState } from 'react';
 
@@ -40,6 +40,37 @@ const Model = ({ url }) => {
       0.5 // tension for smoother turns
     )
   );
+
+  // Load textures
+  const diffuseMap = useLoader(TextureLoader, '/models/textures/koi_showa_diff.png');
+  const bumpMap = useLoader(TextureLoader, '/models/textures/koi_showa_bump.png');
+  const specularMap = useLoader(TextureLoader, '/models/textures/koi_showa_spec.png');
+  const subsurfaceMap = useLoader(TextureLoader, '/models/textures/koi_showa_subsur.png');
+
+  // Apply textures when model loads
+  useEffect(() => {
+    if (!modelRef.current) return;
+  
+    // Traverse the model to find meshes
+    modelRef.current.traverse((child) => {
+      if (child.isMesh) {
+        // Create a new standard material with textures
+        child.material = new THREE.MeshStandardMaterial({
+          // map: diffuseMap,              // Color/diffuse texture
+          // bumpMap: bumpMap,             // Bump mapping
+          bumpScale: 1,              // Adjust bump strength
+          // roughnessMap: specularMap,    // Using spec map for roughness
+          roughness: 5,               // Base roughness
+          metalness: 2,               // Base metalness
+          envMapIntensity: 1,           // Environment map intensity
+        });
+        
+        // Enable shadow casting and receiving
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+  }, [diffuseMap, bumpMap, specularMap, subsurfaceMap]);
 
   // State
   const [fishState, setFishState] = useState(FISH_STATES.SWIMMING);
