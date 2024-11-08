@@ -182,7 +182,7 @@ const Model = ({ url }) => {
         renderComponent.quaternion.setFromEuler(euler);
       }
     };
-    
+
     // Connect AI to visual model
     fishAI.current.setRenderComponent(modelRef.current, sync);
     entityManager.current.add(fishAI.current);
@@ -196,24 +196,54 @@ const Model = ({ url }) => {
   useFrame((state, delta) => {
     // Update animation mixer
     mixer.current?.update(delta);
-
-    if (!modelRef.current || fishState !== FISH_STATES.SWIMMING) return;
-
+  
+    if (!modelRef.current || fishState !== FISH_STATES.SWIMMING || !fishAI.current) return;
+  
     // Update AI
     const deltaTime = time.current.update().getDelta();
     entityManager.current.update(deltaTime);
-
-    // Keep existing animation code for tail movement
+  
+    // Get current velocity and calculate animation parameters
+    const currentVelocity = fishAI.current.velocity.length();
+    const velocityFactor = THREE.MathUtils.clamp(currentVelocity / fishAI.current.maxSpeed, 0.3, 1);
+    
+    // Get turning amount from velocity direction change
+    const currentDirection = fishAI.current.velocity.clone().normalize();
+    const turnAmount = Math.atan2(currentDirection.x, currentDirection.z);
+    
+    // Update procedural animation
     const swimTime = state.clock.getElapsedTime();
     modelRef.current.traverse((child) => {
-      if (child.isBone && (
-          child.name.startsWith('Spine') || 
-          child.name.startsWith('Tail') || 
-          child.name.startsWith('TailA') || 
-          child.name.startsWith('TailB'))) {
-        const phase = child.name.includes('Tail') ? Math.PI / 2 : 0;
-        const sway = Math.sin(swimTime * 5 + phase) * 0.2;
-        child.rotation.y = sway;
+      if (child.isBone) {
+        if (child.name.startsWith('Spine') || 
+            child.name.startsWith('Tail') || 
+            child.name.startsWith('TailA') || 
+            child.name.startsWith('TailB')) {
+          
+          // Calculate bone index (higher number = further back in the spine)
+          const boneIndex = parseInt(child.name.match(/\d+/) || '0');
+          
+          // Increase amplitude towards the tail
+          const tailFactor = boneIndex / 10 + 0.5; // Adjust these numbers to taste
+          
+          // Base swim motion
+          const frequency = 5 * velocityFactor; // Swim faster when moving faster
+          const baseAmplitude = 0.15 * velocityFactor; // Stronger swing with higher speed
+          
+          // Add turn influence
+          const turnInfluence = turnAmount * 0.5 * tailFactor; // Adjust multiplier to taste
+          
+          // Combine swimming and turning
+          const phase = child.name.includes('Tail') ? Math.PI / 2 : 0;
+          const sway = (Math.sin(swimTime * frequency + phase) * baseAmplitude * tailFactor) + turnInfluence;
+          
+          // Apply smoother rotation
+          child.rotation.y = THREE.MathUtils.lerp(
+            child.rotation.y,
+            sway,
+            delta * 10 // Adjust smoothing factor
+          );
+        }
       }
     });
   });
