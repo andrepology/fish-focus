@@ -7,6 +7,37 @@ import { Leva } from 'leva';
 import { useFrame, useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useState } from 'react';
+import * as YUKA from 'yuka';
+
+
+
+
+
+
+
+class Fish extends YUKA.Vehicle {
+  constructor() {
+    super();
+    
+    // Configure vehicle properties
+    this.maxSpeed = 10;
+    this.maxForce = 100;
+    
+    // Set initial velocity to prevent stalling
+    this.velocity.set(0.1, 0, 0);
+    
+    // Configure wander behavior with more pronounced parameters
+    this.wanderBehavior = new YUKA.WanderBehavior();
+    this.wanderBehavior.jitter = 0.8;    // Increase randomness
+    this.wanderBehavior.radius = 4;      // Larger radius for wider turns
+    this.wanderBehavior.distance = 10;    // Look further ahead
+    this.wanderBehavior.weight = 1;
+    
+    // Add behavior to steering
+    this.steering.add(this.wanderBehavior);
+  }
+}
+
 
 const FISH_STATES = {
   SWIMMING: 'SWIMMING',
@@ -92,7 +123,6 @@ const Model = ({ url }) => {
       action.setLoop(LoopRepeat, Infinity);
     });
 
-    console.log(animations);
 
     const initialAction = actions.current[selectedAnimation];
     initialAction.play();
@@ -126,62 +156,66 @@ const Model = ({ url }) => {
   const position = useRef(new THREE.Vector3()); // Fish's current position
   const direction = useRef(new THREE.Vector3(1, 0, 0)); // Fish's current direction
 
-  // Update movement and rotation each frame
+  // Add Yuka entities
+  const fishAI = useRef();
+  const entityManager = useRef(new YUKA.EntityManager());
+  const time = useRef(new YUKA.Time());
+
+  // Initialize AI and model
+  useEffect(() => {
+    if (!modelRef.current) return;
+
+    // Create fish AI
+    fishAI.current = new Fish();
+    fishAI.current.position.copy(position.current);
+    
+    // Create sync function to update Three.js object from AI
+    const sync = (entity, renderComponent) => {
+      // Update position
+      renderComponent.position.copy(entity.position);
+      
+      // Calculate rotation based on velocity direction
+      if (entity.velocity.length() > 0.001) {  // Only rotate if moving
+        const direction = entity.velocity.clone().normalize();
+        const angle = Math.atan2(direction.x, direction.z);
+        const euler = new THREE.Euler(0, angle, 0);
+        renderComponent.quaternion.setFromEuler(euler);
+      }
+    };
+    
+    // Connect AI to visual model
+    fishAI.current.setRenderComponent(modelRef.current, sync);
+    entityManager.current.add(fishAI.current);
+    
+    return () => {
+      entityManager.current.clear();
+    };
+  }, []);
+
+  // Replace existing movement code in useFrame with:
   useFrame((state, delta) => {
+    // Update animation mixer
     mixer.current?.update(delta);
 
     if (!modelRef.current || fishState !== FISH_STATES.SWIMMING) return;
 
-    const currentPosition = position.current;
-    const currentDirection = direction.current;
-    const targetPos = targetPosition.current;
+    // Update AI
+    const deltaTime = time.current.update().getDelta();
+    entityManager.current.update(deltaTime);
 
-    // Calculate the desired direction
-    const desiredDirection = targetPos.clone().sub(currentPosition).normalize();
-
-    // Calculate the angle between current and desired directions
-    let angle = currentDirection.angleTo(desiredDirection);
-
-    // Cross product to determine turn direction
-    const cross = new THREE.Vector3().crossVectors(currentDirection, desiredDirection);
-    const turnDirection = cross.y >= 0 ? 1 : -1;
-
-    // Limit the turn angle
-    const maxTurn = maxTurnAngle * delta * 60; // Adjust for frame rate
-    if (angle > maxTurn) angle = maxTurn;
-
-    // Update current direction
-    const axis = new THREE.Vector3(0, 1, 0); // Y-axis for horizontal turning
-    const quaternion = new THREE.Quaternion().setFromAxisAngle(axis, angle * turnDirection);
-    currentDirection.applyQuaternion(quaternion).normalize();
-
-    // Update speed based on some natural variation
-    velocity.current += (Math.random() - 0.5) * acceleration.current;
-    velocity.current = THREE.MathUtils.clamp(velocity.current, minSpeed, maxSpeed);
-
-    // Update position
-    const moveDistance = velocity.current * delta * 60; // Adjust for frame rate
-    currentPosition.add(currentDirection.clone().multiplyScalar(moveDistance));
-    modelRef.current.position.copy(currentPosition);
-
-    // Update rotation
-    const rotationMatrix = new THREE.Matrix4().lookAt(
-      currentPosition.clone().add(currentDirection),
-      currentPosition,
-      new THREE.Vector3(0, 1, 0)
-    );
-    const targetQuaternion = new THREE.Quaternion().setFromRotationMatrix(rotationMatrix);
-    modelRef.current.quaternion.slerp(targetQuaternion, 0.1);
-
-    // If close to the target, pick a new target
-    if (currentPosition.distanceTo(targetPos) < 5) {
-      targetPosition.current = getRandomTarget(50);
-    }
-
-    // Update camera with smoother following
-    // const cameraTarget = currentPosition.clone();
-    // state.camera.position.lerp(new Vector3(cameraTarget.x, 50, cameraTarget.z), 0.05);
-    // state.camera.lookAt(cameraTarget.x, cameraTarget.y, cameraTarget.z);
+    // Keep existing animation code for tail movement
+    const swimTime = state.clock.getElapsedTime();
+    modelRef.current.traverse((child) => {
+      if (child.isBone && (
+          child.name.startsWith('Spine') || 
+          child.name.startsWith('Tail') || 
+          child.name.startsWith('TailA') || 
+          child.name.startsWith('TailB'))) {
+        const phase = child.name.includes('Tail') ? Math.PI / 2 : 0;
+        const sway = Math.sin(swimTime * 5 + phase) * 0.2;
+        child.rotation.y = sway;
+      }
+    });
   });
 
   return (
