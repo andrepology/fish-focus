@@ -8,8 +8,7 @@ import { useFrame, useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useState } from 'react';
 import * as YUKA from 'yuka';
-
-
+import { useThree } from '@react-three/fiber';
 
 
 
@@ -20,40 +19,27 @@ class Fish extends YUKA.Vehicle {
     super();
     
     // Configure vehicle properties
-    this.maxSpeed = 10;
-    this.maxForce = 100;
+    this.maxSpeed = 2;
+    this.maxForce = 0.5;
     
-    // Set initial velocity to prevent stalling
-    this.velocity.set(0.1, 0, 0);
+    // Important: Set the vehicle's forward vector to match the fish's natural orientation
+    // Assuming the fish model's natural forward direction is along positive Z
+    this.forward = new YUKA.Vector3(0, 0, 1);
     
-    // Configure wander behavior with more pronounced parameters
+    // Configure wander behavior
     this.wanderBehavior = new YUKA.WanderBehavior();
-    this.wanderBehavior.jitter = 0.8;    // Increase randomness
-    this.wanderBehavior.radius = 4;      // Larger radius for wider turns
-    this.wanderBehavior.distance = 10;    // Look further ahead
-    this.wanderBehavior.weight = 1;
+    this.wanderBehavior.jitter = 0.1;
+    this.wanderBehavior.radius = 2;
+    this.wanderBehavior.distance = 6;
+    this.wanderBehavior.weight = 0.5;
     
-    // Add behavior to steering
     this.steering.add(this.wanderBehavior);
   }
 }
 
 
-const FISH_STATES = {
-  SWIMMING: 'SWIMMING',
-  IDLE: 'IDLE',
-  // Add more states as needed
-};
-
-const getRandomTarget = (radius) => {
-  const angle = Math.random() * Math.PI * 2;
-  const distance = Math.random() * radius;
-  const x = Math.cos(angle) * distance;
-  const z = Math.sin(angle) * distance;
-  return new Vector3(x, 0, z);
-};
-
 const Model = ({ url }) => {
+  
   // Keep only essential refs
   const modelRef = useRef();
 
@@ -92,7 +78,8 @@ const Model = ({ url }) => {
   const position = useRef(new THREE.Vector3());
   const fishAI = useRef();
   const entityManager = useRef(new YUKA.EntityManager());
-  const time = useRef(new YUKA.Time());
+  const yukaTime = useRef(new YUKA.Time());
+
 
   // Initialize AI and model
   useEffect(() => {
@@ -101,14 +88,17 @@ const Model = ({ url }) => {
     fishAI.current = new Fish();
     fishAI.current.position.copy(position.current);
     
+    // Define sync function to properly orient the model
     const sync = (entity, renderComponent) => {
       renderComponent.position.copy(entity.position);
       
+      // Only update rotation if we're actually moving
       if (entity.velocity.length() > 0.001) {
+        // Calculate the rotation based on velocity direction
         const direction = entity.velocity.clone().normalize();
+        // Use atan2 for correct heading angle
         const angle = Math.atan2(direction.x, direction.z);
-        const euler = new THREE.Euler(0, angle, 0);
-        renderComponent.quaternion.setFromEuler(euler);
+        renderComponent.rotation.y = angle;
       }
     };
 
@@ -120,11 +110,65 @@ const Model = ({ url }) => {
     };
   }, []);
 
-  // Simple update for YUKA movement
-  useFrame(() => {
-    if (!modelRef.current || !fishAI.current) return;
-    const deltaTime = time.current.update().getDelta();
+  // Add new refs for motion control
+  const spineChain = useRef([]);
+  const time = useRef(0);
+
+  // Initialize spine chain
+  useEffect(() => {
+    if (!modelRef.current) return;
+    
+    // Collect spine bones in specific order for wave propagation
+    const spineOrder = ['Spine2', 'Spine3', 'Tail1', 'Tail2', 'Tail3', 'Tail4', 'Tail5', 'Tail6', 'Tail7'];
+    const bones = [];
+    
+    modelRef.current.traverse((child) => {
+      if (child.isBone) {
+        const index = spineOrder.indexOf(child.name);
+        if (index !== -1) {
+          bones[index] = child;
+          console.log(`Found bone: ${child.name}`);
+          // Reset initial rotation
+          child.rotation.set(0, 0, 0);
+        }
+      }
+    });
+
+    spineChain.current = bones.filter(Boolean);
+  }, []);
+
+  const cameraRef = useRef();
+  const { camera } = useThree();
+  
+
+  // Update YUKA and fish motion
+  useFrame((state, delta) => {
+    if (!modelRef.current || !fishAI.current || spineChain.current.length === 0) return;
+
+    // Update YUKA
+    const deltaTime = yukaTime.current.update().getDelta();
     entityManager.current.update(deltaTime);
+
+    // Get current speed for animation scaling
+    const speed = fishAI.current.velocity.length();
+    const time = state.clock.getElapsedTime();
+
+    // Animate spine chain
+    spineChain.current.forEach((bone, index) => {
+      if (!bone) return;
+
+      // Calculate wave parameters
+      const tailFactor = index / (spineChain.current.length - 1);
+      const frequency = 0.3 * (speed + 1); // Base animation even when still
+      const amplitude = 0.3 * tailFactor; // More movement at tail
+      
+      // Calculate rotation with phase offset
+      const phaseOffset = index * Math.PI * 0.1;
+      const rotationZ = Math.sin(time * frequency + phaseOffset) * amplitude;
+
+      // Apply rotation around Z-axis for side-to-side motion
+      bone.rotation.z = rotationZ;
+    });
   });
 
   return (
