@@ -31,13 +31,13 @@ class Fish extends YUKA.Vehicle {
     this.wanderBehavior.jitter = 50;      // More random movement
     this.wanderBehavior.radius = 5;      // Larger wander circle
     this.wanderBehavior.distance = 100;   // Project circle further ahead
-    this.wanderBehavior.weight = 0.1;      // Full weight for wander force
+    this.wanderBehavior.weight = 0.01;      // Full weight for wander force
     
     // New arrive behavior for moving to clicked point
     this.arriveBehavior = new YUKA.ArriveBehavior();
     this.arriveBehavior.deceleration = 3; // Controls the deceleration
     this.arriveBehavior.active = false;   // Initially inactive
-    this.arriveBehavior.weight = 0.1;     // Weight for arrive force
+    this.arriveBehavior.weight = 0.01;     // Weight for arrive force
   
     // Add behaviors to the steering manager
     this.steering.add(this.wanderBehavior);
@@ -203,7 +203,9 @@ const Model = ({ url }) => {
 
     // Activate arrive behavior and deactivate wander behavior
     fishAI.current.arriveBehavior.active = true;
-    fishAI.current.wanderBehavior.active = false;
+    fishAI.current.arriveBehavior.weight = 0.5;
+    fishAI.current.wanderBehavior.active = true;
+    fishAI.current.wanderBehavior.weight = 0.2;
   };
 
   // Add event listener on mount and clean up on unmount
