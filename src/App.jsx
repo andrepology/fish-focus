@@ -20,9 +20,9 @@ class Fish extends YUKA.Vehicle {
     super();
     
     // Configure vehicle properties for smoother motion
-    this.maxSpeed = 5;
-    this.maxForce = 10;
-    this.maxTurnRate = Math.PI;
+    this.maxSpeed = 20;
+    this.maxForce = 100;
+    this.maxTurnRate = 0.1;
     
     
     
@@ -33,12 +33,22 @@ class Fish extends YUKA.Vehicle {
     this.wanderBehavior.distance = 100;   // Project circle further ahead
     this.wanderBehavior.weight = 0.1;      // Full weight for wander force
     
-    // Add the behavior to the steering manager
+    // New arrive behavior for moving to clicked point
+    this.arriveBehavior = new YUKA.ArriveBehavior();
+    this.arriveBehavior.deceleration = 3; // Controls the deceleration
+    this.arriveBehavior.active = false;   // Initially inactive
+    this.arriveBehavior.weight = 0.1;     // Weight for arrive force
+  
+    // Add behaviors to the steering manager
     this.steering.add(this.wanderBehavior);
+    this.steering.add(this.arriveBehavior);
   }
 }
 
 const Model = ({ url }) => {
+
+  const { camera, gl } = useThree();
+
 
   const controls = useControls({
     // Swimming parameters
@@ -167,6 +177,44 @@ const Model = ({ url }) => {
     spineChain.current = bones.filter(Boolean);
   }, []);
 
+
+  const handleMouseClick = (event) => {
+    if (!fishAI.current) return;
+
+    // Get mouse position in normalized device coordinates (-1 to +1)
+    const rect = gl.domElement.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    // Create a raycaster
+    const mouse = new THREE.Vector2(x, y);
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, camera);
+
+    // Define a plane (XZ plane at y = 0)
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+    // Calculate the intersection point
+    const intersectionPoint = new THREE.Vector3();
+    raycaster.ray.intersectPlane(plane, intersectionPoint);
+
+    // Set the target of the arrive behavior
+    fishAI.current.arriveBehavior.target.copy(intersectionPoint);
+
+    // Activate arrive behavior and deactivate wander behavior
+    fishAI.current.arriveBehavior.active = true;
+    fishAI.current.wanderBehavior.active = false;
+  };
+
+  // Add event listener on mount and clean up on unmount
+  useEffect(() => {
+    gl.domElement.addEventListener('click', handleMouseClick);
+
+    return () => {
+      gl.domElement.removeEventListener('click', handleMouseClick);
+    };
+  }, [gl, camera]);
+
   // Update YUKA and fish motion
   useFrame((state, delta) => {
     if (!modelRef.current || !fishAI.current || spineChain.current.length === 0) return;
@@ -174,6 +222,15 @@ const Model = ({ url }) => {
     // Update YUKA
     const deltaTime = yukaTime.current.update().getDelta();
     entityManager.current.update(deltaTime);
+
+    // Check if arrive behavior is active and if fish has reached the target
+    if (fishAI.current.arriveBehavior.active) {
+      const distance = fishAI.current.position.distanceTo(fishAI.current.arriveBehavior.target);
+      if (distance < 1) { // Threshold distance to consider arrival
+        fishAI.current.arriveBehavior.active = false;
+        fishAI.current.wanderBehavior.active = false;
+      }
+    }
 
     // Get the fish's current speed
     const speed = fishAI.current.getSpeed();
