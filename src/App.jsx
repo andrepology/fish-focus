@@ -15,67 +15,39 @@ import { useThree } from '@react-three/fiber';
 
 
 
-
 class Fish extends YUKA.Vehicle {
   constructor() {
     super();
     
     // Configure vehicle properties for smoother motion
-    this.maxSpeed = 2;
-    this.maxForce = 0.5;
-    this.maxTurnRate = Math.PI * 0.8; // Limit turn rate for more natural movement
+    this.maxSpeed = 5;
+    this.maxForce = 10;
+    this.maxTurnRate = Math.PI;
     
-    // Add velocity smoothing
-    this.smoother = new YUKA.Smoother(8); // Smooth over 8 frames
     
-    // Create boundary walls as proper GameEntity instances
-    const boundarySize = 100;
-    const obstacles = [];
     
-    // Create each wall as a separate GameEntity
-    const topWall = new YUKA.GameEntity();
-    topWall.position = new YUKA.Vector3(0, 0, -boundarySize);
-    topWall.boundingRadius = 5;
-    obstacles.push(topWall);
-    
-    const bottomWall = new YUKA.GameEntity();
-    bottomWall.position = new YUKA.Vector3(0, 0, boundarySize);
-    bottomWall.boundingRadius = 5;
-    obstacles.push(bottomWall);
-    
-    const leftWall = new YUKA.GameEntity();
-    leftWall.position = new YUKA.Vector3(-boundarySize, 0, 0);
-    leftWall.boundingRadius = 5;
-    obstacles.push(leftWall);
-    
-    const rightWall = new YUKA.GameEntity();
-    rightWall.position = new YUKA.Vector3(boundarySize, 0, 0);
-    rightWall.boundingRadius = 5;
-    obstacles.push(rightWall);
-
-    // Configure obstacle avoidance behavior
-    this.obstacleBehavior = new YUKA.ObstacleAvoidanceBehavior(obstacles);
-    this.obstacleBehavior.dBoxMinLength = 12; // Longer detection box for earlier reaction
-    this.obstacleBehavior.brakingWeight = 200;
-    this.obstacleBehavior.weight = 5;
-    
-    // Configure wander behavior
+    // Configure wander behavior with more pronounced settings
     this.wanderBehavior = new YUKA.WanderBehavior();
-    this.wanderBehavior.jitter = 1;
-    this.wanderBehavior.radius = 5;
-    this.wanderBehavior.distance = 100;
-    this.wanderBehavior.weight = 100;
+    this.wanderBehavior.jitter = 50;      // More random movement
+    this.wanderBehavior.radius = 5;      // Larger wander circle
+    this.wanderBehavior.distance = 100;   // Project circle further ahead
+    this.wanderBehavior.weight = 0.1;      // Full weight for wander force
     
-    // Add both behaviors
-    this.steering.add(this.obstacleBehavior);
+    // Add the behavior to the steering manager
     this.steering.add(this.wanderBehavior);
   }
 }
 
-
-
-
 const Model = ({ url }) => {
+
+  const controls = useControls({
+    // Swimming parameters
+    amplitude: { value: 0.2, min: 0.1, max: 1, step: 0.1 },
+    waveFraction: { value: 2, min: 0.5, max: 2, step: 0.1 },
+    waveSpeed: { value: 0.5, min: 0.1, max: 5, step: 0.1 },
+    headMovementScale: { value: 0.2, min: 0, max: 1, step: 0.05 },
+    bodyMovementScale: { value: 0.5, min: 0, max: 1, step: 0.05 },
+  });
 
   // Keep only essential refs
   const modelRef = useRef();
@@ -127,7 +99,9 @@ const Model = ({ url }) => {
     // Define sync function to properly orient the model
     const sync = (entity, renderComponent) => {
       // Calculate offset from tail to center (based on the model's center point)
-      const offset = new THREE.Vector3(0, 0, 5.58); // Move pivot point forward
+      
+      const offset = new THREE.Vector3(0, 0, 0);
+      // const offset = new THREE.Vector3(0, 0, 5.58); // Move pivot point forward
       offset.applyQuaternion(renderComponent.quaternion);
       
       // Apply position with offset
@@ -151,14 +125,29 @@ const Model = ({ url }) => {
   // Add new refs for motion control
   const spineChain = useRef([]);
   const restPose = useRef(new Map());
-
-  const time = useRef(0);
+  const theta = useRef(0);
 
   // Initialize spine chain and store rest pose
   useEffect(() => {
     if (!modelRef.current) return;
 
-    const spineOrder = ['Center', 'Spine1', 'Spine2', 'Spine3', 'Tail1', 'Tail2', 'Tail3', 'Tail4', 'Tail5', 'Tail6', 'Tail7'];
+    const spineOrder = [
+      'Head2',
+      'Head1',
+      'Neck2',
+      'Neck1',
+      'Center',
+      'Spine1',
+      'Spine2',
+      'Spine3',
+      'Tail1',
+      'Tail2',
+      'Tail3',
+      'Tail4',
+      'Tail5',
+      'Tail6',
+      'Tail7'
+    ];
     const bones = [];
 
     modelRef.current.traverse((child) => {
@@ -166,21 +155,17 @@ const Model = ({ url }) => {
         const index = spineOrder.indexOf(child.name);
         if (index !== -1) {
           bones[index] = child;
-          // Store initial rotation as rest pose
           restPose.current.set(child.name, {
             x: child.rotation.x,
             y: child.rotation.y,
             z: child.rotation.z
           });
-          // console.log(`Found bone: ${child.name}`);
         }
       }
     });
 
     spineChain.current = bones.filter(Boolean);
   }, []);
-
-  
 
   // Update YUKA and fish motion
   useFrame((state, delta) => {
@@ -190,58 +175,119 @@ const Model = ({ url }) => {
     const deltaTime = yukaTime.current.update().getDelta();
     entityManager.current.update(deltaTime);
 
-    const speed = fishAI.current.velocity.length();
-    const time = state.clock.getElapsedTime();
-    
-    // Get YUKA steering data
-    const velocity = fishAI.current.velocity;
+    // Get the fish's current speed
+    const speed = fishAI.current.getSpeed();
     const maxSpeed = fishAI.current.maxSpeed;
-    const speedRatio = speed / maxSpeed; // For amplitude modulation
-    
-    // Calculate turn rate (not just instant force)
-    const prevDirection = fishAI.current.forward.clone();
-    const currentDirection = velocity.clone().normalize();
-    const turnRate = prevDirection.angleTo(currentDirection) / delta;
-    let prevSpeed = fishAI.current.velocity.length()
+    const speedRatio = speed / maxSpeed;
 
+    // Link swimming parameters to fish speed
+    const amplitude = controls.amplitude * speedRatio;
+    const waveSpeed = controls.waveSpeed * speedRatio;
+    const waveFraction = controls.waveFraction;
+
+    // Update phase angle theta
+    theta.current += delta * waveSpeed;
+
+    // Apply attenuated sine wave to each bone
     spineChain.current.forEach((bone, index) => {
       if (!bone) return;
-      
+
       const restRotation = restPose.current.get(bone.name);
-      const tailFactor = index / (spineChain.current.length - 1);
-      
-      // 1. Base undulation - traveling wave
-      const frequency = 2 * (speedRatio + 0.5); // Faster swimming = faster undulation
-      const baseAmplitude = 0.15 * Math.min(1, speedRatio + 0.3); // Limited by speed
-      const phaseOffset = index * Math.PI * 0.15; // Increased wave spacing
-      const swimMotion = Math.sin(time * frequency + phaseOffset) * baseAmplitude;
-      
-      // 2. Turn compensation - gradual C-shape
-      const turnInfluence = Math.sign(turnRate) * 
-                           Math.min(Math.abs(turnRate), Math.PI * 0.5) * // Limit max turn
-                           Math.pow(tailFactor, 1.5) * // Non-linear increase towards tail
-                           0.2; // Overall turn strength
-      
-      // 3. Acceleration influence
-      const accelerationFactor = (speed - prevSpeed) / delta;
-      const accelerationInfluence = -accelerationFactor * 
-                                   Math.pow(tailFactor, 2) * // Mostly affects tail
-                                   0.05; // Strength factor
-      
-      // Combine all influences with proper weighting
-      bone.rotation.z = restRotation.z + 
-                       swimMotion + 
-                       turnInfluence * (1 - Math.abs(swimMotion)) + // Reduce during extreme undulation
-                       accelerationInfluence;
+      const totalBones = spineChain.current.length;
+      const x = index / (totalBones - 1); // x ranges from 0 (head) to 1 (tail)
+
+      // Attenuation factor to reduce motion near the head
+      const attenuation = controls.headMovementScale + (1 - controls.headMovementScale) * x ** 2;
+
+      // Calculate rotation angle using attenuated sine function
+      const angle = amplitude * attenuation * Math.sin(2 * Math.PI * waveFraction * x + theta.current);
+
+      // Apply rotation around Z-axis for side-to-side motion
+      bone.rotation.z = restRotation.z + angle * controls.bodyMovementScale;
     });
-    
-    // Store speed for next frame's acceleration calculation
-    prevSpeed = speed;
   });
+
+  // Visual debugger for YUKA
+  function WanderDebug({ fish }) {
+    const wanderCircleRef = useRef();
+    const wanderTargetRef = useRef();
+    const fishPositionRef = useRef();
+  
+    useFrame(() => {
+      if (
+        !fish.current ||
+        !wanderCircleRef.current ||
+        !wanderTargetRef.current ||
+        !fishPositionRef.current
+      ) return;
+  
+      // Get the wander behavior from the fish's steering behaviors
+      const wanderBehavior = fish.current.steering.behaviors.find(
+        behavior => behavior instanceof YUKA.WanderBehavior
+      );
+  
+      if (wanderBehavior) {
+        const vehicle = fish.current;
+        const wanderRadius = wanderBehavior.radius;
+        const wanderDistance = wanderBehavior.distance;
+        const wanderJitter = wanderBehavior.jitter;
+  
+        // Calculate the wander circle center
+        const circleCenter = new YUKA.Vector3().copy(vehicle.velocity);
+        circleCenter.normalize().multiplyScalar(wanderDistance);
+        circleCenter.add(vehicle.position);
+  
+        // For debugging purposes, we can visualize the wander circle and the random vector
+        const theta = Math.atan2(vehicle.velocity.x, vehicle.velocity.z);
+  
+        // Generate a random point on the circle
+        const randomDisplacement = new YUKA.Vector3(
+          (Math.random() - 0.5) * wanderJitter,
+          0,
+          (Math.random() - 0.5) * wanderJitter
+        );
+  
+        // Combine the circle center with the displacement to get the wander target
+        const wanderTarget = new YUKA.Vector3().copy(circleCenter).add(randomDisplacement);
+  
+        // Update debug visual positions
+        wanderCircleRef.current.position.set(circleCenter.x, circleCenter.y, circleCenter.z);
+        wanderCircleRef.current.scale.set(wanderRadius, wanderRadius, wanderRadius);
+  
+        wanderTargetRef.current.position.set(wanderTarget.x, wanderTarget.y, wanderTarget.z);
+        fishPositionRef.current.position.set(vehicle.position.x, vehicle.position.y, vehicle.position.z);
+      }
+    });
+  
+    return (
+      <>
+        {/* Debug sphere for wander circle */}
+        <mesh ref={wanderCircleRef}>
+          <sphereGeometry args={[1, 16, 16]} />
+          <meshBasicMaterial color="yellow" wireframe />
+        </mesh>
+  
+        {/* Debug sphere for wander target */}
+        <mesh ref={wanderTargetRef}>
+          <sphereGeometry args={[0.5, 16, 16]} />
+          <meshBasicMaterial color="red" wireframe />
+        </mesh>
+  
+        {/* Debug sphere for fish AI position */}
+        <mesh ref={fishPositionRef}>
+          <sphereGeometry args={[0.5, 16, 16]} />
+          <meshBasicMaterial color="blue" wireframe />
+        </mesh>
+      </>
+    );
+  }
 
   return (
     <>
       <primitive ref={modelRef} object={fbx} />
+
+      {/* Include the visual debugger */}
+      <WanderDebug fish={fishAI} />
     </>
   );
 };
