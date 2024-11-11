@@ -17,29 +17,30 @@ import { useThree } from '@react-three/fiber';
 class Fish extends YUKA.Vehicle {
   constructor() {
     super();
-    
+
     // Configure vehicle properties
     this.maxSpeed = 2;
-    this.maxForce = 0.5;
-    
+    this.maxForce = 5;
+
     // Important: Set the vehicle's forward vector to match the fish's natural orientation
     // Assuming the fish model's natural forward direction is along positive Z
     this.forward = new YUKA.Vector3(0, 0, 1);
-    
+
+
     // Configure wander behavior
     this.wanderBehavior = new YUKA.WanderBehavior();
     this.wanderBehavior.jitter = 0.1;
     this.wanderBehavior.radius = 2;
-    this.wanderBehavior.distance = 6;
+    this.wanderBehavior.distance = 100;
     this.wanderBehavior.weight = 0.5;
-    
+
     this.steering.add(this.wanderBehavior);
   }
 }
 
 
 const Model = ({ url }) => {
-  
+
   // Keep only essential refs
   const modelRef = useRef();
 
@@ -81,30 +82,34 @@ const Model = ({ url }) => {
   const yukaTime = useRef(new YUKA.Time());
 
 
+
+
   // Initialize AI and model
   useEffect(() => {
     if (!modelRef.current) return;
 
     fishAI.current = new Fish();
     fishAI.current.position.copy(position.current);
-    
+
     // Define sync function to properly orient the model
     const sync = (entity, renderComponent) => {
-      renderComponent.position.copy(entity.position);
+      // Calculate offset from tail to center (based on the model's center point)
+      const offset = new THREE.Vector3(0, 0, 5.58); // Move pivot point forward
+      offset.applyQuaternion(renderComponent.quaternion);
+      
+      // Apply position with offset
+      renderComponent.position.copy(entity.position).add(offset);
       
       // Only update rotation if we're actually moving
       if (entity.velocity.length() > 0.001) {
-        // Calculate the rotation based on velocity direction
         const direction = entity.velocity.clone().normalize();
-        // Use atan2 for correct heading angle
         const angle = Math.atan2(direction.x, direction.z);
         renderComponent.rotation.y = angle;
       }
     };
-
     fishAI.current.setRenderComponent(modelRef.current, sync);
     entityManager.current.add(fishAI.current);
-    
+
     return () => {
       entityManager.current.clear();
     };
@@ -112,24 +117,29 @@ const Model = ({ url }) => {
 
   // Add new refs for motion control
   const spineChain = useRef([]);
+  const restPose = useRef(new Map());
+
   const time = useRef(0);
 
-  // Initialize spine chain
+  // Initialize spine chain and store rest pose
   useEffect(() => {
     if (!modelRef.current) return;
-    
-    // Collect spine bones in specific order for wave propagation
-    const spineOrder = ['Spine2', 'Spine3', 'Tail1', 'Tail2', 'Tail3', 'Tail4', 'Tail5', 'Tail6', 'Tail7'];
+
+    const spineOrder = ['Center', 'Spine1', 'Spine2', 'Spine3', 'Tail1', 'Tail2', 'Tail3', 'Tail4', 'Tail5', 'Tail6', 'Tail7'];
     const bones = [];
-    
+
     modelRef.current.traverse((child) => {
       if (child.isBone) {
         const index = spineOrder.indexOf(child.name);
         if (index !== -1) {
           bones[index] = child;
+          // Store initial rotation as rest pose
+          restPose.current.set(child.name, {
+            x: child.rotation.x,
+            y: child.rotation.y,
+            z: child.rotation.z
+          });
           console.log(`Found bone: ${child.name}`);
-          // Reset initial rotation
-          child.rotation.set(0, 0, 0);
         }
       }
     });
@@ -139,7 +149,7 @@ const Model = ({ url }) => {
 
   const cameraRef = useRef();
   const { camera } = useThree();
-  
+
 
   // Update YUKA and fish motion
   useFrame((state, delta) => {
@@ -149,25 +159,26 @@ const Model = ({ url }) => {
     const deltaTime = yukaTime.current.update().getDelta();
     entityManager.current.update(deltaTime);
 
-    // Get current speed for animation scaling
     const speed = fishAI.current.velocity.length();
     const time = state.clock.getElapsedTime();
 
-    // Animate spine chain
     spineChain.current.forEach((bone, index) => {
       if (!bone) return;
 
+      // Get rest pose rotation
+      const restRotation = restPose.current.get(bone.name);
+
       // Calculate wave parameters
       const tailFactor = index / (spineChain.current.length - 1);
-      const frequency = 0.3 * (speed + 1); // Base animation even when still
-      const amplitude = 0.3 * tailFactor; // More movement at tail
+      const frequency = 0.3 * (speed + 1);
+      const amplitude = 0.3 * tailFactor;
       
       // Calculate rotation with phase offset
       const phaseOffset = index * Math.PI * 0.1;
       const rotationZ = Math.sin(time * frequency + phaseOffset) * amplitude;
 
-      // Apply rotation around Z-axis for side-to-side motion
-      bone.rotation.z = rotationZ;
+      // Apply rotation around Z-axis for side-to-side motion, adding to rest pose
+      bone.rotation.z = restRotation.z + rotationZ;
     });
   });
 
