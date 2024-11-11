@@ -11,6 +11,72 @@ import * as YUKA from 'yuka';
 import { useThree } from '@react-three/fiber';
 
 
+class WanderState extends YUKA.State {
+  enter(fish) {
+    fish.wanderBehavior.active = true;
+    fish.arriveBehavior.active = false;
+    fish.foodTarget = null;
+  }
+
+  execute(fish) {
+    // Continue wandering
+  }
+
+  exit(fish) {
+    fish.wanderBehavior.active = false;
+  }
+}
+
+// SeekFood State
+class SeekFoodState extends YUKA.State {
+  enter(fish) {
+    fish.wanderBehavior.active = false;
+    fish.arriveBehavior.active = true;
+  }
+
+  execute(fish) {
+    // Check if we've lost our food target
+    if (!fish.foodTarget) {
+      fish.stateMachine.changeTo('Wander');
+      return;
+    }
+
+    // Check distance to food
+    const distanceToFood = fish.position.distanceTo(fish.foodTarget.position);
+    
+    if (distanceToFood < 1) {
+      // Food consumption is handled in the useFrame loop
+      fish.arriveBehavior.active = false;
+    }
+  }
+
+  exit(fish) {
+    fish.arriveBehavior.active = false;
+  }
+}
+// Rest State
+class RestState extends YUKA.State {
+  enter(fish) {
+    fish.wanderBehavior.active = false;
+    fish.arriveBehavior.active = false;
+    fish.velocity.set(0, 0, 0);
+    fish.restTimer = 0;
+  }
+
+  execute(fish) {
+    fish.restTimer += fish.manager.deltaTime;
+    
+    // Rest for 3 seconds before returning to wander
+    if (fish.restTimer > 3) {
+      fish.stateMachine.changeTo('Wander');
+      fish.wanderBehavior.active = true;
+    }
+  }
+
+  exit(fish) {
+    fish.restTimer = 0;
+  }
+}
 
 
 
@@ -18,49 +84,63 @@ import { useThree } from '@react-three/fiber';
 class Fish extends YUKA.Vehicle {
   constructor() {
     super();
-    
-    // Configure vehicle properties for smoother motion
-    this.maxSpeed = 20;
-    this.maxForce = 100;
-    this.maxTurnRate = 0.1;
-    
-    
-    
-    // Configure wander behavior with more pronounced settings
+
+    // Configure vehicle properties
+    this.maxSpeed = 5;
+    this.maxForce = 10;
+    this.maxTurnRate = Math.PI / 4;
+
+    // Initialize behaviors
     this.wanderBehavior = new YUKA.WanderBehavior();
-    this.wanderBehavior.jitter = 50;      // More random movement
-    this.wanderBehavior.radius = 5;      // Larger wander circle
-    this.wanderBehavior.distance = 100;   // Project circle further ahead
-    this.wanderBehavior.weight = 0.01;      // Full weight for wander force
-    
-    // New arrive behavior for moving to clicked point
+    this.wanderBehavior.jitter = 50;
+    this.wanderBehavior.radius = 5;
+    this.wanderBehavior.distance = 100;
+    this.wanderBehavior.weight = 0.1;
+
     this.arriveBehavior = new YUKA.ArriveBehavior();
-    this.arriveBehavior.deceleration = 3; // Controls the deceleration
-    this.arriveBehavior.active = false;   // Initially inactive
-    this.arriveBehavior.weight = 0.01;     // Weight for arrive force
-  
-    // Add behaviors to the steering manager
+    this.arriveBehavior.deceleration = 3;
+    this.arriveBehavior.active = false;
+    this.arriveBehavior.weight = 1.0;
+
     this.steering.add(this.wanderBehavior);
     this.steering.add(this.arriveBehavior);
+
+    // Initialize state machine
+    this.stateMachine = new YUKA.StateMachine(this);
+    this.stateMachine.add('Wander', new WanderState());
+    this.stateMachine.add('SeekFood', new SeekFoodState());
+    this.stateMachine.add('Rest', new RestState());
+    this.stateMachine.changeTo('Wander');
+
+    // Additional properties
+    this.foodTarget = null; // Reference to the current food target
+  }
+
+  update(delta) {
+    // Update the state machine
+    this.stateMachine.update();
+    // Update steering behaviors
+    super.update(delta);
   }
 }
 
 const Model = ({ url }) => {
 
-  const { camera, gl } = useThree();
 
 
   const controls = useControls({
     // Swimming parameters
-    amplitude: { value: 0.2, min: 0.1, max: 1, step: 0.1 },
-    waveFraction: { value: 2, min: 0.5, max: 2, step: 0.1 },
-    waveSpeed: { value: 0.5, min: 0.1, max: 5, step: 0.1 },
+    amplitude: { value: 0.3, min: 0.1, max: 1, step: 0.1 },
+    waveFraction: { value: 1.6, min: 0.5, max: 2, step: 0.1 },
+    waveSpeed: { value: 2.5, min: 0.1, max: 5, step: 0.1 },
     headMovementScale: { value: 0.2, min: 0, max: 1, step: 0.05 },
     bodyMovementScale: { value: 0.5, min: 0, max: 1, step: 0.05 },
   });
 
   // Keep only essential refs
   const modelRef = useRef();
+  const [foods, setFoods] = useState([]);
+
 
   // Load textures
   const diffuseMap = useLoader(TextureLoader, '/models/textures/koi_showa_diff.png');
@@ -178,10 +258,13 @@ const Model = ({ url }) => {
   }, []);
 
 
+
+  const { scene, camera, gl } = useThree();
+
   const handleMouseClick = (event) => {
     if (!fishAI.current) return;
 
-    // Get mouse position in normalized device coordinates (-1 to +1)
+    // Get mouse position
     const rect = gl.domElement.getBoundingClientRect();
     const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -198,17 +281,23 @@ const Model = ({ url }) => {
     const intersectionPoint = new THREE.Vector3();
     raycaster.ray.intersectPlane(plane, intersectionPoint);
 
-    // Set the target of the arrive behavior
-    fishAI.current.arriveBehavior.target.copy(intersectionPoint);
-
-    // Activate arrive behavior and deactivate wander behavior
-    fishAI.current.arriveBehavior.active = true;
-    fishAI.current.arriveBehavior.weight = 0.5;
-    fishAI.current.wanderBehavior.active = true;
-    fishAI.current.wanderBehavior.weight = 0.2;
+     // Create a visual representation of the food
+     const foodGeometry = new THREE.BoxGeometry(3, 3, 3);
+     const foodMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+     const foodMesh = new THREE.Mesh(foodGeometry, foodMaterial);
+     foodMesh.position.copy(intersectionPoint);
+     scene.add(foodMesh);
+ 
+     // Add to foods state
+     setFoods(prevFoods => [...prevFoods, foodMesh]);
+ 
+     // Set the target and change state
+     fishAI.current.arriveBehavior.target.copy(intersectionPoint);
+     fishAI.current.foodTarget = foodMesh;
+     fishAI.current.stateMachine.changeTo('SeekFood');
   };
 
-  // Add event listener on mount and clean up on unmount
+  // Add event listener
   useEffect(() => {
     gl.domElement.addEventListener('click', handleMouseClick);
 
@@ -217,6 +306,13 @@ const Model = ({ url }) => {
     };
   }, [gl, camera]);
 
+  useEffect(() => {
+    return () => {
+      foods.forEach(food => scene.remove(food));
+    };
+  }, []);
+
+
   // Update YUKA and fish motion
   useFrame((state, delta) => {
     if (!modelRef.current || !fishAI.current || spineChain.current.length === 0) return;
@@ -224,6 +320,23 @@ const Model = ({ url }) => {
     // Update YUKA
     const deltaTime = yukaTime.current.update().getDelta();
     entityManager.current.update(deltaTime);
+
+    // Check for food consumption
+    if (fishAI.current.foodTarget) {
+      const distanceToFood = fishAI.current.position.distanceTo(fishAI.current.foodTarget.position);
+      
+      if (distanceToFood < 1) { // Threshold for eating
+        // Remove the food mesh from the scene
+        scene.remove(fishAI.current.foodTarget);
+        
+        // Update foods state
+        setFoods(prevFoods => prevFoods.filter(food => food !== fishAI.current.foodTarget));
+        
+        // Clear the target and transition to rest state
+        fishAI.current.foodTarget = null;
+        fishAI.current.stateMachine.changeTo('Rest');
+      }
+    }
 
     // Check if arrive behavior is active and if fish has reached the target
     if (fishAI.current.arriveBehavior.active) {
