@@ -14,29 +14,65 @@ import { useThree } from '@react-three/fiber';
 
 
 
+
+
 class Fish extends YUKA.Vehicle {
   constructor() {
     super();
-
-    // Configure vehicle properties
+    
+    // Configure vehicle properties for smoother motion
     this.maxSpeed = 2;
-    this.maxForce = 5;
+    this.maxForce = 0.5;
+    this.maxTurnRate = Math.PI * 0.8; // Limit turn rate for more natural movement
+    
+    // Add velocity smoothing
+    this.smoother = new YUKA.Smoother(8); // Smooth over 8 frames
+    
+    // Create boundary walls as proper GameEntity instances
+    const boundarySize = 100;
+    const obstacles = [];
+    
+    // Create each wall as a separate GameEntity
+    const topWall = new YUKA.GameEntity();
+    topWall.position = new YUKA.Vector3(0, 0, -boundarySize);
+    topWall.boundingRadius = 5;
+    obstacles.push(topWall);
+    
+    const bottomWall = new YUKA.GameEntity();
+    bottomWall.position = new YUKA.Vector3(0, 0, boundarySize);
+    bottomWall.boundingRadius = 5;
+    obstacles.push(bottomWall);
+    
+    const leftWall = new YUKA.GameEntity();
+    leftWall.position = new YUKA.Vector3(-boundarySize, 0, 0);
+    leftWall.boundingRadius = 5;
+    obstacles.push(leftWall);
+    
+    const rightWall = new YUKA.GameEntity();
+    rightWall.position = new YUKA.Vector3(boundarySize, 0, 0);
+    rightWall.boundingRadius = 5;
+    obstacles.push(rightWall);
 
-    // Important: Set the vehicle's forward vector to match the fish's natural orientation
-    // Assuming the fish model's natural forward direction is along positive Z
-    this.forward = new YUKA.Vector3(0, 0, 1);
-
-
+    // Configure obstacle avoidance behavior
+    this.obstacleBehavior = new YUKA.ObstacleAvoidanceBehavior(obstacles);
+    this.obstacleBehavior.dBoxMinLength = 12; // Longer detection box for earlier reaction
+    this.obstacleBehavior.brakingWeight = 200;
+    this.obstacleBehavior.weight = 5;
+    
     // Configure wander behavior
     this.wanderBehavior = new YUKA.WanderBehavior();
-    this.wanderBehavior.jitter = 0.1;
-    this.wanderBehavior.radius = 2;
+    this.wanderBehavior.jitter = 1;
+    this.wanderBehavior.radius = 5;
     this.wanderBehavior.distance = 100;
-    this.wanderBehavior.weight = 0.5;
-
+    this.wanderBehavior.weight = 100;
+    
+    // Add both behaviors
+    this.steering.add(this.obstacleBehavior);
     this.steering.add(this.wanderBehavior);
   }
 }
+
+
 
 
 const Model = ({ url }) => {
@@ -80,9 +116,6 @@ const Model = ({ url }) => {
   const fishAI = useRef();
   const entityManager = useRef(new YUKA.EntityManager());
   const yukaTime = useRef(new YUKA.Time());
-
-
-
 
   // Initialize AI and model
   useEffect(() => {
@@ -139,7 +172,7 @@ const Model = ({ url }) => {
             y: child.rotation.y,
             z: child.rotation.z
           });
-          console.log(`Found bone: ${child.name}`);
+          // console.log(`Found bone: ${child.name}`);
         }
       }
     });
@@ -147,9 +180,7 @@ const Model = ({ url }) => {
     spineChain.current = bones.filter(Boolean);
   }, []);
 
-  const cameraRef = useRef();
-  const { camera } = useThree();
-
+  
 
   // Update YUKA and fish motion
   useFrame((state, delta) => {
@@ -161,25 +192,51 @@ const Model = ({ url }) => {
 
     const speed = fishAI.current.velocity.length();
     const time = state.clock.getElapsedTime();
+    
+    // Get YUKA steering data
+    const velocity = fishAI.current.velocity;
+    const maxSpeed = fishAI.current.maxSpeed;
+    const speedRatio = speed / maxSpeed; // For amplitude modulation
+    
+    // Calculate turn rate (not just instant force)
+    const prevDirection = fishAI.current.forward.clone();
+    const currentDirection = velocity.clone().normalize();
+    const turnRate = prevDirection.angleTo(currentDirection) / delta;
+    let prevSpeed = fishAI.current.velocity.length()
 
     spineChain.current.forEach((bone, index) => {
       if (!bone) return;
-
-      // Get rest pose rotation
-      const restRotation = restPose.current.get(bone.name);
-
-      // Calculate wave parameters
-      const tailFactor = index / (spineChain.current.length - 1);
-      const frequency = 0.3 * (speed + 1);
-      const amplitude = 0.3 * tailFactor;
       
-      // Calculate rotation with phase offset
-      const phaseOffset = index * Math.PI * 0.1;
-      const rotationZ = Math.sin(time * frequency + phaseOffset) * amplitude;
-
-      // Apply rotation around Z-axis for side-to-side motion, adding to rest pose
-      bone.rotation.z = restRotation.z + rotationZ;
+      const restRotation = restPose.current.get(bone.name);
+      const tailFactor = index / (spineChain.current.length - 1);
+      
+      // 1. Base undulation - traveling wave
+      const frequency = 2 * (speedRatio + 0.5); // Faster swimming = faster undulation
+      const baseAmplitude = 0.15 * Math.min(1, speedRatio + 0.3); // Limited by speed
+      const phaseOffset = index * Math.PI * 0.15; // Increased wave spacing
+      const swimMotion = Math.sin(time * frequency + phaseOffset) * baseAmplitude;
+      
+      // 2. Turn compensation - gradual C-shape
+      const turnInfluence = Math.sign(turnRate) * 
+                           Math.min(Math.abs(turnRate), Math.PI * 0.5) * // Limit max turn
+                           Math.pow(tailFactor, 1.5) * // Non-linear increase towards tail
+                           0.2; // Overall turn strength
+      
+      // 3. Acceleration influence
+      const accelerationFactor = (speed - prevSpeed) / delta;
+      const accelerationInfluence = -accelerationFactor * 
+                                   Math.pow(tailFactor, 2) * // Mostly affects tail
+                                   0.05; // Strength factor
+      
+      // Combine all influences with proper weighting
+      bone.rotation.z = restRotation.z + 
+                       swimMotion + 
+                       turnInfluence * (1 - Math.abs(swimMotion)) + // Reduce during extreme undulation
+                       accelerationInfluence;
     });
+    
+    // Store speed for next frame's acceleration calculation
+    prevSpeed = speed;
   });
 
   return (
