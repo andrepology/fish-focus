@@ -126,11 +126,33 @@ class Fish extends YUKA.Vehicle {
   }
 }
 
+
+const Floor = () => {
+
+
+  const floorControls = useControls('Floor', {
+    floorY: { value: -5, min: -20, max: 0, step: 0.1 },
+    shadowOpacity: { value: 0.2, min: 0, max: 1, step: 0.05 },
+  });
+  
+
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, floorControls.floorY, 0]} receiveShadow>
+      <planeGeometry args={[1000, 1000]} />
+      <meshStandardMaterial 
+        transparent
+        opacity={floorControls.shadowOpacity}
+        roughness={0.7}
+      />
+    </mesh>
+  );
+};
+
 const Model = ({ url }) => {
 
 
 
-  const controls = useControls({
+  const controls = useControls('Model', {
     // Swimming parameters
     amplitude: { value: 0.3, min: 0.1, max: 1, step: 0.1 },
     waveFraction: { value: 1.6, min: 0.5, max: 2, step: 0.1 },
@@ -171,6 +193,7 @@ const Model = ({ url }) => {
   const diffuseMap = useLoader(TextureLoader, '/models/textures/koi_showa_diff.png');
   const bumpMap = useLoader(TextureLoader, '/models/textures/koi_showa_bump.png');
   const specularMap = useLoader(TextureLoader, '/models/textures/koi_showa_spec.png');
+  const subsurfaceMap = useLoader(TextureLoader, '/models/textures/koi_showa_subsur.png');
 
   // Apply textures when model loads
   useEffect(() => {
@@ -180,13 +203,20 @@ const Model = ({ url }) => {
     modelRef.current.traverse((child) => {
       if (child.isMesh) {
         child.material = new THREE.MeshStandardMaterial({
-          map: diffuseMap,
+          // map: diffuseMap,
           bumpMap: bumpMap,
-          bumpScale: 0.05,
-          roughnessMap: specularMap,
-          roughness: 0.5,
-          metalness: 0.2,
-          envMapIntensity: 1,
+          bumpScale: 3,
+          roughness: 0.1,
+          // metalness: 0.4,
+          envMapIntensity: 0,
+
+          // Add subsurface scattering properties
+          transmission: 0.8,
+          thickness: 1.0,
+          
+          // Use subsurface map
+          transmissionMap: subsurfaceMap,
+
         });
 
         child.castShadow = true;
@@ -238,7 +268,7 @@ const Model = ({ url }) => {
       });
     
       // Update position with offset from center of mass
-      const offset = new THREE.Vector3(0, 0, -2); // Adjust based on model
+      const offset = new THREE.Vector3(0, 0, 5.58); // Adjust based on model
       offset.applyQuaternion(renderComponent.quaternion);
       renderComponent.position.copy(entity.position).add(offset);
     
@@ -267,10 +297,6 @@ const Model = ({ url }) => {
   const restPose = useRef(new Map());
 
   const theta = useRef(0);
-  const secondaryTheta = useRef(0);
-
-
-
 
   // Initialize spine chain and store rest pose
   useEffect(() => {
@@ -663,6 +689,7 @@ const Model = ({ url }) => {
   return (
     <>
       <primitive ref={modelRef} object={fbx} />
+      <Floor />
 
       {/* Include the visual debugger */}
       {/* <WanderDebug fish={fishAI} /> */}
@@ -671,11 +698,27 @@ const Model = ({ url }) => {
 };
 
 const App = () => {
+
+  const lightingControls = useControls('Lighting', {
+    shadowSize: { value: 50, min: 10, max: 100, step: 5 },
+    ambientIntensity: { value: 0.6, min: 0, max: 2, step: 0.1 },
+    keyLightIntensity: { value: 1.9, min: 0, max: 3, step: 0.1 },
+    keyLightX: { value: 6, min: -20, max: 20, step: 1 },
+    keyLightY: { value: 13, min: -20, max: 20, step: 1 },
+    keyLightZ: { value: 2, min: -20, max: 20, step: 1 },
+    fillLightIntensity: { value: 0.8, min: 0, max: 2, step: 0.1 },
+    rimLightIntensity: { value: 0.2, min: 0, max: 2, step: 0.1 },
+    hemiIntensity: { value: 0.3, min: 0, max: 2, step: 0.1 },
+    shadowBias: { value: -0.0005, min: -0.01, max: 0.01, step: 0.0001 },
+    shadowRadius: { value: 8, min: 0, max: 20, step: 0.1 },
+  });
+
   return (
     <div className='w-screen h-screen'>
-      <Leva />
+      <Leva collapsed />
       <Canvas
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+        shadows
       >
         <OrthographicCamera
           makeDefault
@@ -684,19 +727,44 @@ const App = () => {
           near={1}
           far={1000}
         />
+
+
         {/* Lighting */}
-        <ambientLight intensity={0.5} />
+
+        <ambientLight intensity={lightingControls.ambientIntensity} />
+
         <directionalLight
-          position={[10, 10, 5]}
-          intensity={1}
+          position={[
+            lightingControls.keyLightX,
+            lightingControls.keyLightY,
+            lightingControls.keyLightZ
+          ]}
+          intensity={lightingControls.keyLightIntensity}
           castShadow
           shadow-mapSize-width={2048}
           shadow-mapSize-height={2048}
+          shadow-camera-left={-lightingControls.shadowSize}
+          shadow-camera-right={lightingControls.shadowSize}
+          shadow-camera-top={lightingControls.shadowSize}
+          shadow-camera-bottom={-lightingControls.shadowSize}
         />
+        
+        <directionalLight
+          position={[-5, 5, -5]}
+          intensity={lightingControls.fillLightIntensity}
+          color="#b6ceff"
+        />
+        
+        <directionalLight
+          position={[0, -5, 5]}
+          intensity={lightingControls.rimLightIntensity}
+          color="#fff6e6"
+        />
+
         <hemisphereLight
-          intensity={0.1}
-          groundColor="#ff0000"
-          color="#0000ff"
+          intensity={lightingControls.hemiIntensity}
+          groundColor="#2a3a4a"
+          color="#90a5c5"
         />
 
         {/* Suspense to handle async loading */}
