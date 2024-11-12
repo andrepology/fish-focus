@@ -89,13 +89,14 @@ class Fish extends YUKA.Vehicle {
     // Configure vehicle properties
     this.maxSpeed = 5;
     this.maxForce = 10;
-    this.maxTurnRate = Math.PI / 4;
+    this.maxTurnRate = Math.PI / 2;
+    this.smoothingFactor = 0.5;
 
     // Initialize behaviors
     this.wanderBehavior = new YUKA.WanderBehavior();
-    this.wanderBehavior.jitter = 50;
-    this.wanderBehavior.radius = 5;
-    this.wanderBehavior.distance = 100;
+    this.wanderBehavior.jitter = 0.1;
+    this.wanderBehavior.radius = 2;
+    this.wanderBehavior.distance = 6;
     this.wanderBehavior.weight = 0.1;
 
     this.arriveBehavior = new YUKA.ArriveBehavior();
@@ -212,20 +213,45 @@ const Model = ({ url }) => {
 
     // Define sync function to properly orient the model
     const sync = (entity, renderComponent) => {
-      // Calculate offset from tail to center (based on the model's center point)
-
-      const offset = new THREE.Vector3(0, 0, 0);
-      // const offset = new THREE.Vector3(0, 0, 5.58); // Move pivot point forward
+      // Calculate turn rate from angular velocity
+      const turnRate = entity.velocity.length() > 0.001 ? 
+        Math.atan2(entity.velocity.x, entity.velocity.z) - renderComponent.rotation.y :
+        0;
+        
+      // Calculate spine curve based on turn rate
+      spineChain.current.forEach((bone, index) => {
+        const x = index / (spineChain.current.length - 1);
+        
+        // Progressive curve - stronger at tail
+        const turnInfluence = Math.pow(x, 2); // Quadratic increase toward tail
+        
+        // Get stored rest pose
+        const restRotation = restPose.current.get(bone.name) || { x: 0, y: 0, z: 0 };
+        
+        // Apply turn-influenced curve
+        const turnAmount = turnRate * turnInfluence * 2; // Adjust multiplier as needed
+        bone.rotation.y = restRotation.y + turnAmount;
+        
+        // Add counter-rotation to maintain smooth flow
+        const counterRotation = -turnAmount * 0.3; // Reduced counter-effect
+        bone.rotation.x = restRotation.x + counterRotation;
+      });
+    
+      // Update position with offset from center of mass
+      const offset = new THREE.Vector3(0, 0, -2); // Adjust based on model
       offset.applyQuaternion(renderComponent.quaternion);
-
-      // Apply position with offset
       renderComponent.position.copy(entity.position).add(offset);
-
-      // Only update rotation if we're actually moving
+    
+      // Smooth rotation transition
       if (entity.velocity.length() > 0.001) {
-        const direction = entity.velocity.clone().normalize();
-        const angle = Math.atan2(direction.x, direction.z);
-        renderComponent.rotation.y = angle;
+        const targetAngle = Math.atan2(entity.velocity.x, entity.velocity.z);
+        const currentAngle = renderComponent.rotation.y;
+        
+        // Interpolate rotation for smoother turns
+        const rotationSpeed = 5; // Adjust as needed
+        renderComponent.rotation.y = currentAngle + 
+          (((targetAngle - currentAngle + Math.PI) % (Math.PI * 2)) - Math.PI) * 
+          Math.min(1, rotationSpeed * entity.velocity.length());
       }
     };
     fishAI.current.setRenderComponent(modelRef.current, sync);
@@ -360,29 +386,36 @@ const Model = ({ url }) => {
   const updateSpineAnimation = useCallback((delta, isResting, speedRatio) => {
     spineChain.current.forEach((bone, index) => {
       if (!bone) return;
-
+  
       const restRotation = restPose.current.get(bone.name);
       const totalBones = spineChain.current.length;
       const x = index / (totalBones - 1);
-
+  
       // Calculate swimming motion
       const attenuation = controls.headMovementScale + (1 - controls.headMovementScale) * x ** 2;
       const currentAmplitude = controls.amplitude * speedRatio;
       
-      // Add traveling wave component
-      const travelingWave = Math.sin(2 * Math.PI * controls.waveFraction * x - theta.current);
-      const standingWave = Math.sin(2 * Math.PI * controls.waveFraction * x + theta.current);
-      
-      // Blend between traveling and standing waves based on speed
-      const blendFactor = speedRatio;
-      const angle = currentAmplitude * attenuation * 
-        (blendFactor * travelingWave + (1 - blendFactor) * standingWave);
-      
-      // Add slight S-curve to spine
-      const naturalCurve = Math.sin(Math.PI * x) * 0.1;
-      
-      bone.rotation.z = restRotation.z + angle * controls.bodyMovementScale + naturalCurve;
-
+      if (isResting) {
+        // When resting, gradually return to rest pose with slight idle motion
+        const idleWave = Math.sin(theta.current * 0.5) * controls.restingTailAmplitude * x;
+        bone.rotation.z = restRotation.z + idleWave;
+      } else {
+        // During swimming, combine traveling wave with dynamic S-curve
+        const travelingWave = Math.sin(2 * Math.PI * controls.waveFraction * x - theta.current);
+        const standingWave = Math.sin(2 * Math.PI * controls.waveFraction * x + theta.current);
+        
+        // Blend between traveling and standing waves based on speed
+        const blendFactor = speedRatio;
+        const waveMotion = currentAmplitude * attenuation * 
+          (blendFactor * travelingWave + (1 - blendFactor) * standingWave);
+        
+        // Dynamic S-curve that alternates sides based on the wave motion
+        // This creates a more natural undulation where the S-curve follows the wave
+        const sCurveMagnitude = 0.1 * speedRatio;
+        const sCurve = Math.sin(Math.PI * x) * Math.cos(theta.current) * sCurveMagnitude;
+        
+        bone.rotation.z = restRotation.z + (waveMotion + sCurve) * controls.bodyMovementScale;
+      }
     });
   }, [controls]);
 
