@@ -368,10 +368,21 @@ const Model = ({ url }) => {
       // Calculate swimming motion
       const attenuation = controls.headMovementScale + (1 - controls.headMovementScale) * x ** 2;
       const currentAmplitude = controls.amplitude * speedRatio;
-      const angle = currentAmplitude * attenuation *
-        Math.sin(2 * Math.PI * controls.waveFraction * x + theta.current);
+      
+      // Add traveling wave component
+      const travelingWave = Math.sin(2 * Math.PI * controls.waveFraction * x - theta.current);
+      const standingWave = Math.sin(2 * Math.PI * controls.waveFraction * x + theta.current);
+      
+      // Blend between traveling and standing waves based on speed
+      const blendFactor = speedRatio;
+      const angle = currentAmplitude * attenuation * 
+        (blendFactor * travelingWave + (1 - blendFactor) * standingWave);
+      
+      // Add slight S-curve to spine
+      const naturalCurve = Math.sin(Math.PI * x) * 0.1;
+      
+      bone.rotation.z = restRotation.z + angle * controls.bodyMovementScale + naturalCurve;
 
-      bone.rotation.z = restRotation.z + angle * controls.bodyMovementScale;
     });
   }, [controls]);
 
