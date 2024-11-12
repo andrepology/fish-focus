@@ -85,7 +85,7 @@ const BasicText = () => {
       position={[0, 5, 0]}
       rotation={[-Math.PI / 2, 0, 0]}
     >
-      <meshStandardMaterial 
+      <meshLambertMaterial 
         color={0x666666}
         metalness={0.1}
         roughness={0.3}
@@ -448,8 +448,8 @@ const Model = ({ url }) => {
     raycaster.ray.intersectPlane(plane, intersectionPoint);
 
     // Create a visual representation of the food
-    const foodGeometry = new THREE.BoxGeometry(3, 3, 3);
-    const foodMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+    const foodGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const foodMaterial = new THREE.MeshBasicMaterial({ color: 0x666666 });
     const foodMesh = new THREE.Mesh(foodGeometry, foodMaterial);
     foodMesh.position.copy(intersectionPoint);
     scene.add(foodMesh);
