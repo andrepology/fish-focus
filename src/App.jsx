@@ -150,6 +150,7 @@ const Floor = () => {
 
 const Model = ({ url }) => {
 
+  
 
 
   const controls = useControls('Model', {
@@ -188,6 +189,35 @@ const Model = ({ url }) => {
   const modelRef = useRef();
   const [foods, setFoods] = useState([]);
 
+  const printBones = useCallback(() => {
+    if (!modelRef.current) {
+      console.log('Model not loaded yet');
+      return;
+    }
+
+    console.log('=== Model Bones ===');
+    modelRef.current.traverse((object) => {
+      if (object.isBone) {
+        console.log(`Bone: ${object.name}`);
+        console.log(`- Position:`, object.position);
+        console.log(`- Rotation:`, object.rotation);
+        console.log(`- Parent:`, object.parent?.name || 'none');
+        console.log('---');
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleKeyPress = (event) => {
+      if (event.key === 'p') {  // Press 'p' to print bones
+        printBones();
+      }
+    };
+
+    window.addEventListener('keypress', handleKeyPress);
+    return () => window.removeEventListener('keypress', handleKeyPress);
+  }, [printBones]);
+
 
   // Load textures
   const diffuseMap = useLoader(TextureLoader, '/models/textures/koi_showa_diff.png');
@@ -202,17 +232,17 @@ const Model = ({ url }) => {
     // Traverse the model to find meshes
     modelRef.current.traverse((child) => {
       if (child.isMesh) {
-        child.material = new THREE.MeshStandardMaterial({
-          // map: diffuseMap,
+        child.material = new THREE.MeshPhysicalMaterial({
+          //map: diffuseMap,
           bumpMap: bumpMap,
-          bumpScale: 3,
-          roughness: 0.1,
-          // metalness: 0.4,
+          bumpScale: 1.5,
+          roughness: 0.9,
+          metalness: 0.1,
           envMapIntensity: 0,
 
           // Add subsurface scattering properties
-          transmission: 0.8,
-          thickness: 1.0,
+          transmission: 0.2,
+          thickness: 0.8,
           
           // Use subsurface map
           transmissionMap: subsurfaceMap,
