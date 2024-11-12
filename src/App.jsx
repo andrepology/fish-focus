@@ -189,34 +189,53 @@ const Model = ({ url }) => {
   const modelRef = useRef();
   const [foods, setFoods] = useState([]);
 
-  const printBones = useCallback(() => {
-    if (!modelRef.current) {
-      console.log('Model not loaded yet');
-      return;
-    }
-
-    console.log('=== Model Bones ===');
-    modelRef.current.traverse((object) => {
-      if (object.isBone) {
-        console.log(`Bone: ${object.name}`);
-        console.log(`- Position:`, object.position);
-        console.log(`- Rotation:`, object.rotation);
-        console.log(`- Parent:`, object.parent?.name || 'none');
-        console.log('---');
+  const printBoneDetails = useCallback((model) => {
+    let output = '\n=== Model Bone Hierarchy ===\n\n';
+    
+    const printBone = (bone, depth = 0) => {
+      const indent = '  '.repeat(depth);
+      const prefix = depth === 0 ? '└─ ' : '├─ ';
+      
+      // Get world position
+      const worldPos = new THREE.Vector3();
+      bone.getWorldPosition(worldPos);
+      
+      output += `${indent}${prefix}${bone.name} ` +
+        `[${worldPos.x.toFixed(1)}, ${worldPos.y.toFixed(1)}, ${worldPos.z.toFixed(1)}]\n`;
+      
+      // Get all child bones (filtering out non-bone children)
+      const childBones = bone.children.filter(child => child.isBone);
+      
+      // Recursively print child bones
+      childBones.forEach((childBone, index) => {
+        printBone(childBone, depth + 1);
+      });
+    };
+  
+    // Find the root bones
+    const rootBones = [];
+    model.traverse((object) => {
+      if (object.isBone && (!object.parent?.isBone)) {
+        rootBones.push(object);
       }
     });
+  
+    // Build the output string
+    rootBones.forEach(bone => printBone(bone));
+    output += '\n';
+    
+    // Single console.log call
+    console.log(output);
   }, []);
 
-  useEffect(() => {
-    const handleKeyPress = (event) => {
-      if (event.key === 'p') {  // Press 'p' to print bones
-        printBones();
-      }
-    };
 
-    window.addEventListener('keypress', handleKeyPress);
-    return () => window.removeEventListener('keypress', handleKeyPress);
-  }, [printBones]);
+  useEffect(() => {
+    if (!modelRef.current) return;
+    
+    // Print bone details when model loads
+    printBoneDetails(modelRef.current);
+  }, [modelRef.current, printBoneDetails]);
+  
 
 
   // Load textures
@@ -447,30 +466,46 @@ const Model = ({ url }) => {
       const totalBones = spineChain.current.length;
       const x = index / (totalBones - 1);
   
-      // Calculate swimming motion
-      const attenuation = controls.headMovementScale + (1 - controls.headMovementScale) * x ** 2;
-      const currentAmplitude = controls.amplitude * speedRatio;
-      
       if (isResting) {
-        // When resting, gradually return to rest pose with slight idle motion
+        // Resting behavior remains the same
         const idleWave = Math.sin(theta.current * 0.5) * controls.restingTailAmplitude * x;
         bone.rotation.z = restRotation.z + idleWave;
       } else {
-        // During swimming, combine traveling wave with dynamic S-curve
-        const travelingWave = Math.sin(2 * Math.PI * controls.waveFraction * x - theta.current);
-        const standingWave = Math.sin(2 * Math.PI * controls.waveFraction * x + theta.current);
+        // Enhanced swimming motion
         
-        // Blend between traveling and standing waves based on speed
-        const blendFactor = speedRatio;
-        const waveMotion = currentAmplitude * attenuation * 
-          (blendFactor * travelingWave + (1 - blendFactor) * standingWave);
+        // Amplitude envelope - increases towards tail following a power curve
+        const amplitudeEnvelope = Math.pow(x, 1.5);
         
-        // Dynamic S-curve that alternates sides based on the wave motion
-        // This creates a more natural undulation where the S-curve follows the wave
-        const sCurveMagnitude = 0.1 * speedRatio;
-        const sCurve = Math.sin(Math.PI * x) * Math.cos(theta.current) * sCurveMagnitude;
+        // Wave number increases towards tail for better propulsion
+        const localWaveNumber = controls.waveFraction * (1 + x * 0.5);
         
-        bone.rotation.z = restRotation.z + (waveMotion + sCurve) * controls.bodyMovementScale;
+        // Phase speed increases towards tail
+        const localPhaseSpeed = theta.current * (1 + x * 0.3);
+        
+        // Main undulation wave
+        const undulation = Math.sin(2 * Math.PI * localWaveNumber * x - localPhaseSpeed);
+        
+        // Add secondary wave components
+        const secondaryWave = Math.sin(4 * Math.PI * localWaveNumber * x - localPhaseSpeed * 1.5) * 0.3;
+        
+        // Combine waves with amplitude modulation
+        const waveMotion = (undulation + secondaryWave) * 
+          controls.amplitude * 
+          amplitudeEnvelope * 
+          speedRatio;
+        
+        // Add rotational component that follows the wave's derivative
+        const rotationComponent = Math.cos(2 * Math.PI * localWaveNumber * x - localPhaseSpeed) * 
+          controls.bodyMovementScale * 
+          speedRatio * 
+          0.3;
+        
+        // Apply combined motion
+        bone.rotation.z = restRotation.z + waveMotion;
+        bone.rotation.y = restRotation.y + rotationComponent;
+        
+        // Add slight counter-rotation to maintain balance
+        bone.rotation.x = restRotation.x - Math.abs(waveMotion) * 0.1;
       }
     });
   }, [controls]);
