@@ -88,8 +88,8 @@ class Fish extends YUKA.Vehicle {
 
     // Configure vehicle properties
     this.maxSpeed = 5;
-    this.maxForce = 10;
-    this.maxTurnRate = Math.PI / 2;
+    this.maxForce = 1;
+    this.maxTurnRate = 0.1;
     this.smoothingFactor = 0.5;
 
     // Initialize behaviors
@@ -97,12 +97,12 @@ class Fish extends YUKA.Vehicle {
     this.wanderBehavior.jitter = 0.1;
     this.wanderBehavior.radius = 2;
     this.wanderBehavior.distance = 6;
-    this.wanderBehavior.weight = 0.1;
+    this.wanderBehavior.weight = 0.3;
 
     this.arriveBehavior = new YUKA.ArriveBehavior();
     this.arriveBehavior.deceleration = 3;
     this.arriveBehavior.active = false;
-    this.arriveBehavior.weight = 1.0;
+    this.arriveBehavior.weight = 0.1;
 
     this.steering.add(this.wanderBehavior);
     this.steering.add(this.arriveBehavior);
