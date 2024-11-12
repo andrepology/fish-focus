@@ -10,6 +10,90 @@ import { useState } from 'react';
 import * as YUKA from 'yuka';
 import { useThree } from '@react-three/fiber';
 
+import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+
+// Replace the BasicText component with this:
+const BasicText = () => {
+  const textRef = useRef();
+  const [font, setFont] = useState(null);
+
+  useEffect(() => {
+    const loader = new FontLoader();
+    loader.load('/fonts/Inter_Bold.json', (loadedFont) => {
+      setFont(loadedFont);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!font || !textRef.current) return;
+
+    // Split text into words
+    const words = 'Where there is a will, there is a way'.split(' ');
+    const maxWidth = 120; // Maximum width for text wrapping
+    const lines = [];
+    let currentLine = [];
+    
+    
+    // Build lines
+    words.forEach(word => {
+      const testLine = [...currentLine, word].join(' ');
+      const tempGeometry = new TextGeometry(testLine, {
+        font: font,
+        size: 12,
+        height: 2,
+        curveSegments: 10,
+      });
+      tempGeometry.computeBoundingBox();
+      const lineWidth = tempGeometry.boundingBox.max.x - tempGeometry.boundingBox.min.x;
+      
+      if (lineWidth > maxWidth && currentLine.length > 0) {
+        lines.push(currentLine.join(' '));
+        currentLine = [word];
+      } else {
+        currentLine.push(word);
+      }
+      tempGeometry.dispose();
+    });
+    if (currentLine.length > 0) {
+      lines.push(currentLine.join(' '));
+    }
+
+    // Create geometry for all lines
+    const geometry = new TextGeometry(lines.join('\n'), {
+      font: font,
+      size: 8,
+      height: 2,
+      curveSegments: 12,
+      bevelEnabled: false
+    });
+
+    geometry.computeVertexNormals();
+    geometry.center();
+
+    geometry.computeBoundingBox();
+    const width = geometry.boundingBox.max.x - geometry.boundingBox.min.x;
+    const centerOffset = -0.5 * width;
+    textRef.current.geometry = geometry;
+    textRef.current.position.x = centerOffset;
+
+  }, [font]);
+
+  return (
+    <mesh 
+      ref={textRef} 
+      position={[0, 5, 0]}
+      rotation={[-Math.PI / 2, 0, 0]}
+    >
+      <meshStandardMaterial 
+        color={0x666666}
+        metalness={0.1}
+        roughness={0.3}
+        side={THREE.FrontSide} // Render both sides of the geometry
+      />
+    </mesh>
+  );
+};
 
 
 class WanderState extends YUKA.State {
@@ -188,55 +272,6 @@ const Model = ({ url }) => {
   // Keep only essential refs
   const modelRef = useRef();
   const [foods, setFoods] = useState([]);
-
-  const printBoneDetails = useCallback((model) => {
-    let output = '\n=== Model Bone Hierarchy ===\n\n';
-    
-    const printBone = (bone, depth = 0) => {
-      const indent = '  '.repeat(depth);
-      const prefix = depth === 0 ? '└─ ' : '├─ ';
-      
-      // Get world position
-      const worldPos = new THREE.Vector3();
-      bone.getWorldPosition(worldPos);
-      
-      output += `${indent}${prefix}${bone.name} ` +
-        `[${worldPos.x.toFixed(1)}, ${worldPos.y.toFixed(1)}, ${worldPos.z.toFixed(1)}]\n`;
-      
-      // Get all child bones (filtering out non-bone children)
-      const childBones = bone.children.filter(child => child.isBone);
-      
-      // Recursively print child bones
-      childBones.forEach((childBone, index) => {
-        printBone(childBone, depth + 1);
-      });
-    };
-  
-    // Find the root bones
-    const rootBones = [];
-    model.traverse((object) => {
-      if (object.isBone && (!object.parent?.isBone)) {
-        rootBones.push(object);
-      }
-    });
-  
-    // Build the output string
-    rootBones.forEach(bone => printBone(bone));
-    output += '\n';
-    
-    // Single console.log call
-    console.log(output);
-  }, []);
-
-
-  useEffect(() => {
-    if (!modelRef.current) return;
-    
-    // Print bone details when model loads
-    printBoneDetails(modelRef.current);
-  }, [modelRef.current, printBoneDetails]);
-  
-
 
   // Load textures
   const diffuseMap = useLoader(TextureLoader, '/models/textures/koi_showa_diff.png');
@@ -755,6 +790,7 @@ const Model = ({ url }) => {
     <>
       <primitive ref={modelRef} object={fbx} />
       <Floor />
+      <BasicText />
 
       {/* Include the visual debugger */}
       {/* <WanderDebug fish={fishAI} /> */}
