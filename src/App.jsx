@@ -239,11 +239,11 @@ const Model = ({ url }) => {
 
   const controls = useControls('Model', {
     // Swimming parameters
-    amplitude: { value: 0.3, min: 0.1, max: 1, step: 0.1 },
+    amplitude: { value: 0.1, min: 0.1, max: 1, step: 0.1 },
     waveFraction: { value: 1.6, min: 0.5, max: 2, step: 0.1 },
     waveSpeed: { value: 2.5, min: 0.1, max: 5, step: 0.1 },
     headMovementScale: { value: 0.2, min: 0, max: 1, step: 0.05 },
-    bodyMovementScale: { value: 0.5, min: 0, max: 1, step: 0.05 },
+    bodyMovementScale: { value: 0.1, min: 0, max: 1, step: 0.05 },
 
     // Rest parameters
     restingTailAmplitude: { value: 0.1, min: 0, max: 0.3, step: 0.01 },
