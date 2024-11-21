@@ -872,47 +872,130 @@ const constrainDistance = (pos, anchor, constraint) => {
   return pos.clone();
 };
 
+const WanderDebug = ({ vehicle }) => {
+  const wanderCircleRef = useRef();
+  const wanderTargetRef = useRef();
+  const vehiclePositionRef = useRef();
+
+  useFrame(() => {
+    if (!vehicle.current) return;
+
+    // Get the wander behavior
+    const wanderBehavior = vehicle.current.steering.behaviors.find(
+      behavior => behavior instanceof YUKA.WanderBehavior
+    );
+
+    if (wanderBehavior) {
+      const wanderRadius = wanderBehavior.radius;
+      const wanderDistance = wanderBehavior.distance;
+      
+      // Calculate wander circle center
+      const circleCenter = vehicle.current.velocity.clone()
+        .normalize()
+        .multiplyScalar(wanderDistance)
+        .add(vehicle.current.position);
+
+      // Update debug visuals
+      wanderCircleRef.current.position.copy(circleCenter);
+      wanderCircleRef.current.scale.setScalar(wanderRadius);
+      vehiclePositionRef.current.position.copy(vehicle.current.position);
+    }
+  });
+
+  return (
+    <>
+      {/* Wander circle visualization */}
+      <mesh ref={wanderCircleRef}>
+        <circleGeometry args={[1, 32]} />
+        <meshBasicMaterial color="yellow" wireframe />
+      </mesh>
+
+      {/* Vehicle position marker */}
+      <mesh ref={vehiclePositionRef}>
+        <circleGeometry args={[0.2, 16]} />
+        <meshBasicMaterial color="blue" wireframe />
+      </mesh>
+    </>
+  );
+};
+
+
+class Fish2DEntity extends YUKA.Vehicle {
+  constructor() {
+    super();
+    
+    // Configure vehicle properties
+    this.maxSpeed = 2;
+    this.maxForce = 0.3; // Reduced for smoother turning
+    
+    // Add wander behavior with tuned parameters
+    const wanderBehavior = new YUKA.WanderBehavior();
+    wanderBehavior.radius = 4;      // Larger radius for wider turns
+    wanderBehavior.distance = 6;    // Further ahead for more natural anticipation
+    wanderBehavior.jitter = 0.8;    // Increased randomness
+    
+    this.steering.add(wanderBehavior);
+  }
+
+  update(delta) {
+    // Constrain to 2D plane
+    this.position.y = 0;
+    this.velocity.y = 0;
+    
+    super.update(delta);
+  }
+}
 
 const Fish2D = () => {
+  const entityManager = useRef(new YUKA.EntityManager());
+  const time = useRef(new YUKA.Time());
+  const fish = useRef();
+  
   const chainRef = useRef({
     joints: [],
-    angles: [],
-    segmentLength: 0.5, // Smaller value for better visualization
-    maxAngle: Math.PI / 8,
+    segmentLength: 0.5,
     numSegments: 12
   });
-  
+
   const debugRef = useRef({
     group: new THREE.Group(),
     spheres: [],
     lines: null
   });
 
-  // Initialize the chain
+  // Debug controls
+  const debugControls = useControls('Fish Debug', {
+    showWanderCircle: true,
+    showSegments: true
+  });
+
   useEffect(() => {
+    // Initialize fish entity
+    fish.current = new Fish2DEntity();
+    entityManager.current.add(fish.current);
+
+    // Initialize joint chain
     const chain = chainRef.current;
     const group = debugRef.current.group;
     
-    // Create initial joint positions in a straight line
     for (let i = 0; i < chain.numSegments; i++) {
       chain.joints.push(new THREE.Vector3(i * chain.segmentLength, 0, 0));
-      chain.angles.push(0);
-    }
-    
-    // Create spheres for joints
-    for (let i = 0; i < chain.numSegments; i++) {
-      const geometry = new THREE.SphereGeometry(0.1, 16, 16);
-      const material = new THREE.MeshBasicMaterial({ 
-        color: i === 0 ? 0xff0000 : 0xffffff,
-        wireframe: true 
-      });
-      const sphere = new THREE.Mesh(geometry, material);
-      sphere.position.copy(chain.joints[i]);
-      group.add(sphere);
-      debugRef.current.spheres.push(sphere);
+      
+      if (debugControls.showSegments) {
+        const sphere = new THREE.Mesh(
+          new THREE.SphereGeometry(0.1, 16, 16),
+          new THREE.MeshBasicMaterial({ 
+            color: i === 0 ? 0xff0000 : 0xffffff,
+            wireframe: true 
+          })
+        );
+        sphere.position.copy(chain.joints[i]);
+        group.add(sphere);
+        debugRef.current.spheres.push(sphere);
+      }
     }
 
-    // Create line connecting joints
+    // Create connecting line
     const lineGeometry = new THREE.BufferGeometry();
     const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffff00 });
     const line = new THREE.Line(lineGeometry, lineMaterial);
@@ -920,89 +1003,41 @@ const Fish2D = () => {
     debugRef.current.lines = line;
   }, []);
 
-  const constrainAngle = (angle, prevAngle, maxAngle) => {
-    const diff = angle - prevAngle;
-    const clampedDiff = THREE.MathUtils.clamp(diff, -maxAngle, maxAngle);
-    return prevAngle + clampedDiff;
-  };
+  useFrame((state, delta) => {
+    // Update YUKA
+    const deltaTime = time.current.update().getDelta();
+    entityManager.current.update(deltaTime);
 
-  // Update chain positions
-  useFrame((state) => {
-    const chain = chainRef.current;
-    
-    // Get normalized mouse position in world space
-    const mouse = new THREE.Vector3(
-      (state.mouse.x * state.viewport.width) / 2,
-      (state.mouse.y * state.viewport.height) / 2,
-      0
-    );
-
-    // Forward pass: Move head towards mouse and propagate constraints
-    const headToMouse = mouse.clone().sub(chain.joints[0]);
-    if (headToMouse.length() > 0.001) {
-      // Move head towards mouse with smooth interpolation
-      chain.joints[0].lerp(mouse, 0.1);
+    // Update joint chain based on fish position
+    if (fish.current) {
+      const chain = chainRef.current;
       
-      // Forward pass: Update subsequent joints
+      // Update head position to follow fish
+      chain.joints[0].copy(fish.current.position);
+      
+      // Update subsequent joints
       for (let i = 1; i < chain.numSegments; i++) {
         const prev = chain.joints[i - 1];
         const curr = chain.joints[i];
         
-        // Calculate direction and enforce segment length
-        const dir = curr.clone().sub(prev);
-        dir.normalize().multiplyScalar(chain.segmentLength);
-        curr.copy(prev).add(dir);
+        const dir = curr.clone().sub(prev).normalize();
+        curr.copy(prev).add(dir.multiplyScalar(chain.segmentLength));
       }
+
+      // Update visuals
+      debugRef.current.spheres.forEach((sphere, i) => {
+        sphere.position.copy(chain.joints[i]);
+      });
+      debugRef.current.lines.geometry.setFromPoints(chain.joints);
     }
-
-    // Backward pass: Maintain chain integrity
-    for (let i = chain.numSegments - 1; i > 0; i--) {
-      const curr = chain.joints[i];
-      const prev = chain.joints[i - 1];
-      
-      // Calculate direction and enforce segment length
-      const dir = prev.clone().sub(curr);
-      dir.normalize().multiplyScalar(chain.segmentLength);
-      prev.copy(curr).add(dir);
-    }
-
-    // Calculate and constrain angles
-    for (let i = 1; i < chain.numSegments - 1; i++) {
-      const prev = chain.joints[i - 1];
-      const curr = chain.joints[i];
-      const next = chain.joints[i + 1];
-      
-      // Calculate angle between segments
-      const dir1 = prev.clone().sub(curr);
-      const dir2 = next.clone().sub(curr);
-      const angle = dir1.angleTo(dir2);
-      
-      // Constrain angle
-      const constrainedAngle = constrainAngle(angle, chain.angles[i], chain.maxAngle);
-      
-      // Apply constraint by rotating the next segment
-      if (angle !== constrainedAngle) {
-        const rotationAxis = new THREE.Vector3().crossVectors(dir1, dir2).normalize();
-        const rotationMatrix = new THREE.Matrix4().makeRotationAxis(
-          rotationAxis,
-          constrainedAngle - angle
-        );
-        const rotatedDir = dir2.applyMatrix4(rotationMatrix);
-        next.copy(curr).add(rotatedDir.normalize().multiplyScalar(chain.segmentLength));
-      }
-      
-      chain.angles[i] = constrainedAngle;
-    }
-
-    // Update visual representation
-    debugRef.current.spheres.forEach((sphere, i) => {
-      sphere.position.copy(chain.joints[i]);
-    });
-
-    debugRef.current.lines.geometry.setFromPoints(chain.joints);
   });
 
-  return <primitive object={debugRef.current.group} />;
+  return (
+    <>
+      <primitive object={debugRef.current.group} />
+      {<WanderDebug vehicle={fish} />}
+    </>
+  );
 };
 
 const App = () => {
