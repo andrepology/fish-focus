@@ -13,6 +13,8 @@ import { useThree } from '@react-three/fiber';
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
 import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 
+import { Html } from '@react-three/drei';
+
 // Replace the BasicText component with this:
 const BasicText = () => {
   const textRef = useRef();
@@ -232,6 +234,9 @@ const Floor = () => {
   );
 };
 
+
+
+
 const Model = ({ url }) => {
 
   
@@ -242,7 +247,7 @@ const Model = ({ url }) => {
     amplitude: { value: 0.1, min: 0.1, max: 1, step: 0.1 },
     waveFraction: { value: 1.6, min: 0.5, max: 2, step: 0.1 },
     waveSpeed: { value: 2.5, min: 0.1, max: 5, step: 0.1 },
-    headMovementScale: { value: 0.2, min: 0, max: 1, step: 0.05 },
+    headMovementScale: { value: 1.0, min: 0, max: 1, step: 0.05 },
     bodyMovementScale: { value: 0.1, min: 0, max: 1, step: 0.05 },
 
     // Rest parameters
@@ -334,7 +339,7 @@ const Model = ({ url }) => {
         
       // Calculate spine curve based on turn rate
       spineChain.current.forEach((bone, index) => {
-        const x = index / (spineChain.current.length - 1);
+        const x = 1 + index / (spineChain.current.length - 1);
         
         // Progressive curve - stronger at tail
         const turnInfluence = Math.pow(x, 2); // Quadratic increase toward tail
@@ -380,6 +385,61 @@ const Model = ({ url }) => {
   const spineChain = useRef([]);
   const restPose = useRef(new Map());
 
+
+  useEffect(() => {
+    if (!modelRef.current) return;
+  
+    console.log('=== All Bones in Model ===');
+    modelRef.current.traverse((child) => {
+      if (child.isBone) {
+        console.log(`Found bone: ${child.name}`);
+      }
+    });
+  
+    const spineOrder = [
+      'Head2',
+      'Head1',
+      'Neck2',
+      'Neck1',
+      'Center',
+      'Spine1',
+      'Spine2',
+      'Spine3',
+      'Tail1',
+      'Tail2',
+      'Tail3',
+      'Tail4',
+      'Tail5',
+      'Tail6',
+      'Tail7'
+    ];
+  
+    const bones = [];
+    let foundBones = new Set();
+  
+    modelRef.current.traverse((child) => {
+      if (child.isBone) {
+        const index = spineOrder.indexOf(child.name);
+        if (index !== -1) {
+          bones[index] = child;
+          foundBones.add(child.name);
+          restPose.current.set(child.name, {
+            x: child.rotation.x,
+            y: child.rotation.y,
+            z: child.rotation.z
+          });
+        }
+      }
+    });
+  
+    console.log('=== Spine Chain Analysis ===');
+    console.log('Found bones:', Array.from(foundBones));
+    console.log('Missing bones:', spineOrder.filter(name => !foundBones.has(name)));
+    console.log('Final spine chain:', bones.filter(Boolean).map(bone => bone.name));
+  
+    spineChain.current = bones.filter(Boolean);
+  }, []);
+
   const theta = useRef(0);
 
   // Initialize spine chain and store rest pose
@@ -387,6 +447,8 @@ const Model = ({ url }) => {
     if (!modelRef.current) return;
 
     const spineOrder = [
+      'Nose_end',
+      'Nose',
       'Head2',
       'Head1',
       'Neck2',
@@ -477,6 +539,8 @@ const Model = ({ url }) => {
       foods.forEach(food => scene.remove(food));
     };
   }, []);
+
+  
 
   const smoothers = useRef({
     leftPec: new YUKA.Smoother(8),  // Pectoral fins (sides)
@@ -791,6 +855,7 @@ const Model = ({ url }) => {
       <primitive ref={modelRef} object={fbx} />
       <Floor />
       <BasicText />
+      {/* <BoneDebugger spineChain={spineChain} /> */}
 
       {/* Include the visual debugger */}
       {/* <WanderDebug fish={fishAI} /> */}
@@ -829,9 +894,7 @@ const App = () => {
           far={1000}
         />
 
-
         {/* Lighting */}
-
         <ambientLight intensity={lightingControls.ambientIntensity} />
 
         <directionalLight
