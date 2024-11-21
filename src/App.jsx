@@ -863,6 +863,148 @@ const Model = ({ url }) => {
   );
 };
 
+
+const constrainDistance = (pos, anchor, constraint) => {
+  const diff = new THREE.Vector3().subVectors(pos, anchor);
+  if (diff.length() > constraint) {
+    return anchor.clone().add(diff.normalize().multiplyScalar(constraint));
+  }
+  return pos.clone();
+};
+
+
+const Fish2D = () => {
+  const chainRef = useRef({
+    joints: [],
+    angles: [],
+    segmentLength: 0.5, // Smaller value for better visualization
+    maxAngle: Math.PI / 8,
+    numSegments: 12
+  });
+  
+  const debugRef = useRef({
+    group: new THREE.Group(),
+    spheres: [],
+    lines: null
+  });
+
+  // Initialize the chain
+  useEffect(() => {
+    const chain = chainRef.current;
+    const group = debugRef.current.group;
+    
+    // Create initial joint positions in a straight line
+    for (let i = 0; i < chain.numSegments; i++) {
+      chain.joints.push(new THREE.Vector3(i * chain.segmentLength, 0, 0));
+      chain.angles.push(0);
+    }
+    
+    // Create spheres for joints
+    for (let i = 0; i < chain.numSegments; i++) {
+      const geometry = new THREE.SphereGeometry(0.1, 16, 16);
+      const material = new THREE.MeshBasicMaterial({ 
+        color: i === 0 ? 0xff0000 : 0xffffff,
+        wireframe: true 
+      });
+      const sphere = new THREE.Mesh(geometry, material);
+      sphere.position.copy(chain.joints[i]);
+      group.add(sphere);
+      debugRef.current.spheres.push(sphere);
+    }
+
+    // Create line connecting joints
+    const lineGeometry = new THREE.BufferGeometry();
+    const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffff00 });
+    const line = new THREE.Line(lineGeometry, lineMaterial);
+    group.add(line);
+    debugRef.current.lines = line;
+  }, []);
+
+  const constrainAngle = (angle, prevAngle, maxAngle) => {
+    const diff = angle - prevAngle;
+    const clampedDiff = THREE.MathUtils.clamp(diff, -maxAngle, maxAngle);
+    return prevAngle + clampedDiff;
+  };
+
+  // Update chain positions
+  useFrame((state) => {
+    const chain = chainRef.current;
+    
+    // Get normalized mouse position in world space
+    const mouse = new THREE.Vector3(
+      (state.mouse.x * state.viewport.width) / 2,
+      (state.mouse.y * state.viewport.height) / 2,
+      0
+    );
+
+    // Forward pass: Move head towards mouse and propagate constraints
+    const headToMouse = mouse.clone().sub(chain.joints[0]);
+    if (headToMouse.length() > 0.001) {
+      // Move head towards mouse with smooth interpolation
+      chain.joints[0].lerp(mouse, 0.1);
+      
+      // Forward pass: Update subsequent joints
+      for (let i = 1; i < chain.numSegments; i++) {
+        const prev = chain.joints[i - 1];
+        const curr = chain.joints[i];
+        
+        // Calculate direction and enforce segment length
+        const dir = curr.clone().sub(prev);
+        dir.normalize().multiplyScalar(chain.segmentLength);
+        curr.copy(prev).add(dir);
+      }
+    }
+
+    // Backward pass: Maintain chain integrity
+    for (let i = chain.numSegments - 1; i > 0; i--) {
+      const curr = chain.joints[i];
+      const prev = chain.joints[i - 1];
+      
+      // Calculate direction and enforce segment length
+      const dir = prev.clone().sub(curr);
+      dir.normalize().multiplyScalar(chain.segmentLength);
+      prev.copy(curr).add(dir);
+    }
+
+    // Calculate and constrain angles
+    for (let i = 1; i < chain.numSegments - 1; i++) {
+      const prev = chain.joints[i - 1];
+      const curr = chain.joints[i];
+      const next = chain.joints[i + 1];
+      
+      // Calculate angle between segments
+      const dir1 = prev.clone().sub(curr);
+      const dir2 = next.clone().sub(curr);
+      const angle = dir1.angleTo(dir2);
+      
+      // Constrain angle
+      const constrainedAngle = constrainAngle(angle, chain.angles[i], chain.maxAngle);
+      
+      // Apply constraint by rotating the next segment
+      if (angle !== constrainedAngle) {
+        const rotationAxis = new THREE.Vector3().crossVectors(dir1, dir2).normalize();
+        const rotationMatrix = new THREE.Matrix4().makeRotationAxis(
+          rotationAxis,
+          constrainedAngle - angle
+        );
+        const rotatedDir = dir2.applyMatrix4(rotationMatrix);
+        next.copy(curr).add(rotatedDir.normalize().multiplyScalar(chain.segmentLength));
+      }
+      
+      chain.angles[i] = constrainedAngle;
+    }
+
+    // Update visual representation
+    debugRef.current.spheres.forEach((sphere, i) => {
+      sphere.position.copy(chain.joints[i]);
+    });
+
+    debugRef.current.lines.geometry.setFromPoints(chain.joints);
+  });
+
+  return <primitive object={debugRef.current.group} />;
+};
+
 const App = () => {
 
   const lightingControls = useControls('Lighting', {
@@ -888,62 +1030,17 @@ const App = () => {
       >
         <OrthographicCamera
           makeDefault
-          position={[0, 50, 0]}
-          zoom={10}
-          near={1}
+          position={[0, 0, 10]}
+          zoom={100}
+          near={0.1}
           far={1000}
         />
 
-        {/* Lighting */}
-        <ambientLight intensity={lightingControls.ambientIntensity} />
-
-        <directionalLight
-          position={[
-            lightingControls.keyLightX,
-            lightingControls.keyLightY,
-            lightingControls.keyLightZ
-          ]}
-          intensity={lightingControls.keyLightIntensity}
-          castShadow
-          shadow-mapSize-width={2048}
-          shadow-mapSize-height={2048}
-          shadow-camera-left={-lightingControls.shadowSize}
-          shadow-camera-right={lightingControls.shadowSize}
-          shadow-camera-top={lightingControls.shadowSize}
-          shadow-camera-bottom={-lightingControls.shadowSize}
-        />
+        <ambientLight intensity={1} />
         
-        <directionalLight
-          position={[-5, 5, -5]}
-          intensity={lightingControls.fillLightIntensity}
-          color="#b6ceff"
-        />
-        
-        <directionalLight
-          position={[0, -5, 5]}
-          intensity={lightingControls.rimLightIntensity}
-          color="#fff6e6"
-        />
+        <Fish2D />
 
-        <hemisphereLight
-          intensity={lightingControls.hemiIntensity}
-          groundColor="#2a3a4a"
-          color="#90a5c5"
-        />
-
-        {/* Suspense to handle async loading */}
-        <Suspense fallback={null}>
-          <Model url="/models/koi_showa.fbx" />
-        </Suspense>
-
-        {/* Orbit Controls for camera manipulation */}
-        <OrbitControls
-          enableRotate={true}
-          enablePan={true}
-          minZoom={0}
-          maxZoom={100}
-          target={[0, 0, 0]}
-        />
+        {/* Remove OrbitControls for now to make mouse interaction easier */}
       </Canvas>
       <Loader />
     </div>
